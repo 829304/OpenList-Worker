@@ -363,16 +363,11 @@ export async function getOrInitUsers(envCtx: any) {
       (envCtx && envCtx.ADMIN_PASS) ||
       (typeof process !== "undefined" ? process.env?.ADMIN_PASS : "") ||
       ""
-    if (adminUser && envPass) {
-      // ADMIN_PASS is explicit operator intent: initialize or reset the admin
-      // password, even when the stored hash is already in the current format.
-      // Avoid rewriting the database on every request when it already matches.
-      if (!(await verifyUserPassword(adminUser, envPass))) {
+    if (adminUser && !isValidFormat) {
+      if (envPass) {
         await setUserPassword(adminUser, envPass)
         await saveDb(db, envCtx)
-      }
-    } else if (adminUser && !isValidFormat) {
-      if (!adminPass) {
+      } else if (!adminPass) {
         // 未初始化：不再自动生成随机密码，交由 Web 安装向导（POST /api/public/init/setup）完成。
         // 前端会在 /api/public/init_status 返回未初始化时自动跳转到安装向导。
         console.warn(
