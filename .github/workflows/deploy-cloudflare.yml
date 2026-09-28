@@ -41,6 +41,9 @@ jobs:
           version: 9.15.4
           run_install: false
 
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Fetch official frontend assets
         run: node scripts/fetch-frontend.mjs
 
