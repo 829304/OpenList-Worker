@@ -47,6 +47,18 @@ jobs:
       - name: Fetch official frontend assets
         run: node scripts/fetch-frontend.mjs
 
+      - name: Configure initial admin password
+        env:
+          ADMIN_PASS: ${{ secrets.ADMIN_PASS }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$ADMIN_PASS" ]; then
+            echo "ADMIN_PASS GitHub Actions secret is required for first-time admin initialization." >&2
+            exit 1
+          fi
+          printf '%s' "$ADMIN_PASS" | pnpm exec wrangler secret put ADMIN_PASS
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v4
         with:
