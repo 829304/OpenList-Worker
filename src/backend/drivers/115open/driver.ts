@@ -126,6 +126,18 @@ export class Pan115Driver implements StorageDriver {
     return (this.addition.root_id || "0").trim() || "0"
   }
 
+  private toApiPath(physicalPath: string): string {
+    const clean =
+      "/" +
+      String(physicalPath || "")
+        .split("/")
+        .filter(Boolean)
+        .join("/")
+    const rootId = this.getRootId()
+    if (rootId === "0") return clean
+    return clean === "/" ? `/${rootId}` : `/${rootId}${clean}`
+  }
+
   private reserve(): boolean {
     if (this.budget.used >= this.budget.limit) {
       console.warn(
@@ -181,7 +193,7 @@ export class Pan115Driver implements StorageDriver {
     if (cached) return cached
 
     // 用 GetFolderInfoByPath 一次性解析（Go Get 逻辑）
-    const fullPath = rootId === "0" ? clean : `/${rootId}${clean}`
+    const fullPath = this.toApiPath(clean)
     try {
       if (!this.reserve()) throw new Error("subrequest budget exceeded")
       const info = await this.client.getFolderInfoByPath(fullPath)
@@ -306,11 +318,17 @@ export class Pan115Driver implements StorageDriver {
         file.pc ||
         (file as Pan115File & { pick_code?: string }).pick_code ||
         ""
+      let linkStage = "读取文件详情"
       try {
-        // 部分列表响应未带 pc；按文件 ID 查询详情补齐下载所需的 pick_code。
+        // 部分列表响应未带 pc；按文件路径查询详情补齐下载所需的 pick_code。
         if (!pickCode) {
           if (!this.reserve()) throw new Error("subrequest budget exceeded")
-          pickCode = (await this.client.getFolderInfo(file.fid)).pick_code || ""
+          pickCode =
+            (
+              await this.client.getFolderInfoByPath(
+                this.toApiPath(physicalPath),
+              )
+            ).pick_code || ""
         }
         if (!pickCode) {
           item.raw_url_error =
@@ -328,6 +346,7 @@ export class Pan115Driver implements StorageDriver {
           item.raw_url = cached.url
           item.raw_url_headers = { "User-Agent": OPENLIST_UA }
         } else {
+          linkStage = "请求下载地址"
           if (!this.reserve()) throw new Error("subrequest budget exceeded")
           const resp = await this.client.downUrl(pickCode, OPENLIST_UA)
           const entry = resp[file.fid]
@@ -353,7 +372,7 @@ export class Pan115Driver implements StorageDriver {
             "[115open] downurl 配额用尽（406）：已使用缓存或稍后重试",
           )
         } else {
-          item.raw_url_error = msg
+          item.raw_url_error = `${linkStage}失败：${msg}`
           console.warn(
             `[115open] download link resolution failed for ${file.fn}:`,
             e.message,

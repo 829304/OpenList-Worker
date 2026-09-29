@@ -643,8 +643,10 @@ rawRouter.get("/*", async (c) => {
                 ? "该条目是文件夹，不可作为文件下载。"
                 : "该存储驱动未返回下载链接（raw_url 为空）。")
             return c.text(
-              `File not found or no download link available: ${reqPath}\n${detail}`,
-              404,
+              fileItem?.raw_url_error
+                ? `Download failed: ${reqPath}\n${detail}`
+                : `File not found or no download link available: ${reqPath}\n${detail}`,
+              fileItem?.raw_url_error ? 502 : 404,
             )
           }
         } catch (e: any) {
