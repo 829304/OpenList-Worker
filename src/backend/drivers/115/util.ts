@@ -67,7 +67,14 @@ export class Client115 {
         Authorization: `Bearer ${this.accessToken}`,
       },
     })
-    const data: any = await resp.json().catch(() => ({}))
+    const rawBody = await resp.text()
+    let data: any = {}
+    try {
+      data = rawBody ? JSON.parse(rawBody) : {}
+    } catch {
+      // Keep non-JSON error bodies available for diagnosis (for example, an
+      // upstream 404 page) instead of collapsing them into "API error".
+    }
     const errorCode = data?.errno ?? data?.errcode ?? data?.code
     const hasErrorCode =
       errorCode !== undefined && errorCode !== null && String(errorCode) !== "0"
@@ -88,15 +95,19 @@ export class Client115 {
         await this.refreshAccessToken()
         return this.request<T>(path, body, base, method)
       }
+      const responseDetail = rawBody.trim().replace(/\s+/g, " ").slice(0, 240)
       const message =
         data?.error ||
         data?.errmsg ||
         data?.message ||
         data?.msg ||
         data?.error_info ||
+        responseDetail ||
         "API error"
-      const codeSuffix = hasErrorCode ? ` (${errorCode})` : ` (HTTP ${resp.status})`
-      throw new Error(`[115] ${message}${codeSuffix}`)
+      const codeSuffix = hasErrorCode
+        ? ` (${errorCode})`
+        : ` (HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""})`
+      throw new Error(`[115] ${message}${codeSuffix} [${url.pathname}]`)
     }
     return data as T
   }
@@ -139,7 +150,12 @@ export class Client115 {
         o: this.addition.order_by || "user_utime",
         asc: this.addition.order_direction === "asc" ? 1 : 0,
         show_dir: 1,
-        cur: 1,
+        // Match the OpenList 115 SDK: cur=1 can behave incorrectly for the
+        // root directory, so request the normal listing mode.
+        cur: 0,
+        custom_order: 0,
+        stdir: 0,
+        star: 0,
       },
       API_BASE,
       "GET",
