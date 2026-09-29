@@ -376,7 +376,11 @@ export class Pan115Driver implements StorageDriver {
     }
     const item = pan115FileToFileItem(file)
     if (file.fc !== "0") {
+      const incomingUserAgent = options?.userAgent?.trim() || ""
       const userAgent = options?.userAgent?.trim() || OPENLIST_UA
+      const userAgentSource = incomingUserAgent
+        ? "incoming-request"
+        : "openlist-fallback"
       const pickCode =
         file.pc ||
         (file as Pan115File & { pick_code?: string }).pick_code ||
@@ -427,8 +431,18 @@ export class Pan115Driver implements StorageDriver {
         } else {
           item.raw_url_error = `${linkStage}失败：${msg}`
           console.warn(
-            `[115open] download link resolution failed for ${file.fn}:`,
-            e.message,
+            "[115open] download link resolution failed",
+            {
+              stage: linkStage,
+              endpoint: e?.endpoint || "/open/ufile/downurl",
+              httpStatus: e?.httpStatus,
+              apiCode: e?.code,
+              requestId: e?.requestId || undefined,
+              userAgentSource,
+              sentCookieNames: e?.sentCookieNames || [],
+              receivedCookieNames: e?.receivedCookieNames || [],
+              message: msg,
+            },
           )
         }
       }

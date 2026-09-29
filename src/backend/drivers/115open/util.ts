@@ -46,8 +46,65 @@ function isAuthError(code: number): boolean {
 /** SDK Error Code 430004 = 对象不存在 */
 export const ERR_OBJECT_NOT_FOUND = 430004
 
+type Pan115Cookie = {
+  name: string
+  value: string
+  domain: string
+  hostOnly: boolean
+  path: string
+  secure: boolean
+  expiresAt?: number
+}
+
+type Pan115RequestResult = {
+  body: any
+  httpStatus: number
+  requestId: string
+  endpoint: string
+  sentCookieNames: string[]
+  receivedCookieNames: string[]
+}
+
+function responseSetCookies(headers: Headers): string[] {
+  const workerHeaders = headers as Headers & {
+    getSetCookie?: () => string[]
+    getAll?: (name: string) => string[]
+  }
+  if (typeof workerHeaders.getSetCookie === "function") {
+    return workerHeaders.getSetCookie()
+  }
+  if (typeof workerHeaders.getAll === "function") {
+    try {
+      return workerHeaders.getAll("Set-Cookie")
+    } catch {
+      // Browser-compatible Headers implementations may reject getAll().
+    }
+  }
+  const combined = headers.get("set-cookie")
+  // Expires attributes contain commas; split only where another cookie pair starts.
+  return combined
+    ? combined.split(/,(?=\s*[^;,=\s]+=[^;,]*)/g).map((v) => v.trim())
+    : []
+}
+
+function defaultCookiePath(pathname: string): string {
+  const slash = pathname.lastIndexOf("/")
+  return slash <= 0 ? "/" : pathname.slice(0, slash)
+}
+
+function cookiePathMatches(requestPath: string, cookiePath: string): boolean {
+  if (requestPath === cookiePath) return true
+  if (!requestPath.startsWith(cookiePath)) return false
+  return cookiePath.endsWith("/") || requestPath[cookiePath.length] === "/"
+}
+
 export class Pan115Client {
   private addition: Pan115Addition
+  /**
+   * Go's Resty client keeps a cookie jar between API calls. Workers fetch does
+   * not, so retain 115's anti-abuse/session cookies explicitly for this client.
+   */
+  private cookieJar = new Map<string, Pan115Cookie>()
   public accessToken = ""
   public refreshTokenValue = ""
   private onTokenUpdate?: (tokens: {
@@ -81,6 +138,99 @@ export class Pan115Client {
       await new Promise((r) => setTimeout(r, wait))
     }
     this.lastRequestAt = Date.now()
+  }
+
+  private getCookieHeader(url: URL): { value: string; names: string[] } {
+    const now = Date.now()
+    const matches: Pan115Cookie[] = []
+    for (const [key, cookie] of this.cookieJar) {
+      if (cookie.expiresAt !== undefined && cookie.expiresAt <= now) {
+        this.cookieJar.delete(key)
+        continue
+      }
+      const domainMatches = cookie.hostOnly
+        ? url.hostname === cookie.domain
+        : url.hostname === cookie.domain ||
+          url.hostname.endsWith(`.${cookie.domain}`)
+      if (
+        domainMatches &&
+        cookiePathMatches(url.pathname || "/", cookie.path) &&
+        (!cookie.secure || url.protocol === "https:")
+      ) {
+        matches.push(cookie)
+      }
+    }
+    matches.sort((a, b) => b.path.length - a.path.length)
+    return {
+      value: matches.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),
+      names: matches.map((cookie) => cookie.name),
+    }
+  }
+
+  private storeResponseCookies(url: URL, headers: Headers): string[] {
+    const receivedNames: string[] = []
+    for (const rawCookie of responseSetCookies(headers)) {
+      const parts = rawCookie.split(";")
+      const pair = parts.shift()?.trim() || ""
+      const equals = pair.indexOf("=")
+      if (equals <= 0) continue
+
+      const name = pair.slice(0, equals).trim()
+      const value = pair.slice(equals + 1).trim()
+      let domain = url.hostname.toLowerCase()
+      let hostOnly = true
+      let path = defaultCookiePath(url.pathname || "/")
+      let secure = false
+      let expiresAt: number | undefined
+      let maxAge: number | undefined
+
+      for (const part of parts) {
+        const split = part.indexOf("=")
+        const attrName = (split < 0 ? part : part.slice(0, split))
+          .trim()
+          .toLowerCase()
+        const attrValue = split < 0 ? "" : part.slice(split + 1).trim()
+        if (attrName === "domain" && attrValue) {
+          domain = attrValue.replace(/^\./, "").toLowerCase()
+          hostOnly = false
+        } else if (attrName === "path" && attrValue.startsWith("/")) {
+          path = attrValue
+        } else if (attrName === "secure") {
+          secure = true
+        } else if (attrName === "max-age") {
+          const parsed = Number.parseInt(attrValue, 10)
+          if (Number.isFinite(parsed)) maxAge = parsed
+        } else if (attrName === "expires") {
+          const parsed = Date.parse(attrValue)
+          if (Number.isFinite(parsed)) expiresAt = parsed
+        }
+      }
+
+      if (
+        url.hostname !== domain &&
+        !url.hostname.toLowerCase().endsWith(`.${domain}`)
+      ) {
+        continue
+      }
+      const key = `${domain}\t${path}\t${name}`
+      if (maxAge !== undefined) expiresAt = Date.now() + maxAge * 1000
+      if (maxAge === 0 || (expiresAt !== undefined && expiresAt <= Date.now())) {
+        this.cookieJar.delete(key)
+        receivedNames.push(name)
+        continue
+      }
+      this.cookieJar.set(key, {
+        name,
+        value,
+        domain,
+        hostOnly,
+        path,
+        secure,
+        expiresAt,
+      })
+      receivedNames.push(name)
+    }
+    return receivedNames
   }
 
   /** fetch + 20s 超时 + 网络错误重试 3 次（瞬时故障恢复） */
@@ -170,7 +320,7 @@ export class Pan115Client {
   ): Promise<any> {
     await this.waitRateLimit()
 
-    const doReq = async (): Promise<{ body: any; rawText: string }> => {
+    const doReq = async (): Promise<Pan115RequestResult> => {
       const u = new URL(url)
       for (const [k, v] of Object.entries(query || {})) {
         if (v !== "") u.searchParams.set(k, v)
@@ -181,6 +331,8 @@ export class Pan115Client {
           ua ||
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/142.0.0.0 OpenList/425.6.30",
       }
+      const requestCookies = this.getCookieHeader(u)
+      if (requestCookies.value) headers.Cookie = requestCookies.value
       if (this.accessToken)
         headers["Authorization"] = `Bearer ${this.accessToken}`
       const init: RequestInit = { method, headers }
@@ -193,6 +345,7 @@ export class Pan115Client {
         init.body = body.toString()
       }
       const res = await this.fetchWithRetry(u.toString(), init)
+      const receivedCookieNames = this.storeResponseCookies(u, res.headers)
       const rawText = await res.text()
       let body: any
       try {
@@ -204,15 +357,44 @@ export class Pan115Client {
           message: rawText.slice(0, 200),
         }
       }
-      return { body, rawText }
+      const requestId =
+        res.headers.get("x-request-id") ||
+        res.headers.get("request-id") ||
+        res.headers.get("x-req-id") ||
+        res.headers.get("x-trace-id") ||
+        res.headers.get("trace-id") ||
+        (typeof body?.request_id === "string" ? body.request_id : "")
+      return {
+        body,
+        httpStatus: res.status,
+        requestId: /^[A-Za-z0-9._:-]{1,128}$/.test(requestId.trim())
+          ? requestId.trim()
+          : "",
+        endpoint: u.pathname,
+        sentCookieNames: requestCookies.names,
+        receivedCookieNames,
+      }
     }
 
-    let body: any
+    let response: Pan115RequestResult
     try {
-      ;({ body } = await doReq())
+      response = await doReq()
     } catch (e) {
       // 网络层失败（fetch failed / ECONNREFUSED / 超时）→ 透传 cause 便于诊断
       throw new Error(Pan115Client.describeNetError(e))
+    }
+    let body = response.body
+    const apiError = (result: Pan115RequestResult, code: number) => {
+      const err: any = new Error(
+        `115 网盘 API 错误（code ${code} ${result.body?.message || ""}）`,
+      )
+      err.code = code
+      err.httpStatus = result.httpStatus
+      err.requestId = result.requestId
+      err.endpoint = result.endpoint
+      err.sentCookieNames = result.sentCookieNames
+      err.receivedCookieNames = result.receivedCookieNames
+      return err
     }
     const state = body?.state
     if (state === false || state === undefined) {
@@ -220,25 +402,19 @@ export class Pan115Client {
       if (isAuthError(code) && !skipAuthRetry) {
         // token 失效 → 刷新一次并重试（防递归：skipAuthRetry=true 时不再刷新）
         await this.refreshToken()
-        const retry = await doReq()
-        body = retry.body
+        response = await doReq()
+        body = response.body
         const retryState = body?.state
         if (retryState !== false && retryState !== undefined) {
           return body
         }
-        throw new Error(
-          `115 网盘 API 错误（code ${body?.code} ${body?.message}）`,
-        )
+        throw apiError(response, Number(body?.code ?? 0))
       }
       // 对象不存在错误（430004）——SDK ErrObjectNotFound
       if (code === ERR_OBJECT_NOT_FOUND) {
-        const err: any = new Error("115 object not found")
-        err.code = ERR_OBJECT_NOT_FOUND
-        throw err
+        throw apiError(response, ERR_OBJECT_NOT_FOUND)
       }
-      throw new Error(
-        `115 网盘 API 错误（code ${code} ${body?.message || ""}）`,
-      )
+      throw apiError(response, code)
     }
     return body
   }
