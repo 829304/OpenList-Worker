@@ -7,7 +7,6 @@ import { OnedriveAPP } from "../../drivers/onedrive_app/driver"
 import { AliyundriveOpen } from "../../drivers/aliyundrive_open/driver"
 import { GoogleDrive } from "../../drivers/google_drive/driver"
 import { QuarkDriver } from "../../drivers/quark/driver"
-import { Driver115 } from "../../drivers/115/driver"
 import { DriverCloudreve } from "../../drivers/cloudreve_v4/driver"
 import { DriverCloudreveV3 } from "../../drivers/cloudreve_v3/driver"
 import { DriverOpenlist } from "../../drivers/openlist/driver"
@@ -288,9 +287,30 @@ async function createDriver(
     normDriver === "115" ||
     normDriver === "115cloud" ||
     normDriver === "115open" ||
-    normDriver === "115netdisk"
+    normDriver === "115netdisk" ||
+    normDriver === "115pan"
   ) {
-    driver = new Driver115(parseAddition(storageConfig))
+    const addition = parseAddition(storageConfig)
+    driver = new Pan115Driver(addition, async (tokens) => {
+      // Persist rotated access/refresh tokens for subsequent Worker isolates.
+      try {
+        const db = await getDb()
+        const st = (db.storages || []).find(
+          (s: any) => s.id === storageConfig?.id,
+        )
+        if (!st) return
+        const stAddition =
+          typeof st.addition === "string"
+            ? JSON.parse(st.addition || "{}")
+            : st.addition || {}
+        stAddition.access_token = tokens.access_token
+        stAddition.refresh_token = tokens.refresh_token
+        st.addition = JSON.stringify(stAddition)
+        await saveDb(db)
+      } catch (e) {
+        console.warn("[115open] failed to persist token:", e)
+      }
+    })
     await driver.init?.()
   } else if (
     normDriver === "cloudreve" ||
@@ -568,35 +588,6 @@ async function createDriver(
         await saveDb(db)
       } catch (e) {
         console.warn("[baidu_netdisk] failed to persist token:", e)
-      }
-    })
-    await driver.init?.()
-  } else if (
-    normDriver === "115open" ||
-    normDriver === "115" ||
-    normDriver === "115pan" ||
-    normDriver === "115cloud" ||
-    normDriver.startsWith("115")
-  ) {
-    const addition = parseAddition(storageConfig)
-    driver = new Pan115Driver(addition, async (tokens) => {
-      // 持久化刷新后的 access_token / refresh_token，避免冷启动重复刷新
-      try {
-        const db = await getDb()
-        const st = (db.storages || []).find(
-          (s: any) => s.id === storageConfig?.id,
-        )
-        if (!st) return
-        const stAddition =
-          typeof st.addition === "string"
-            ? JSON.parse(st.addition || "{}")
-            : st.addition || {}
-        stAddition.access_token = tokens.access_token
-        stAddition.refresh_token = tokens.refresh_token
-        st.addition = JSON.stringify(stAddition)
-        await saveDb(db)
-      } catch (e) {
-        console.warn("[115open] failed to persist token:", e)
       }
     })
     await driver.init?.()
