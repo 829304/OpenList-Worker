@@ -30,6 +30,14 @@ const ApiFsDelete = API_BASE + "/open/ufile/delete"
 const ApiUserInfo = API_BASE + "/open/user/info"
 const ApiRefreshToken = API_AUTH + "/open/refreshToken"
 
+/** The 115 folder-info endpoint may encode data as either an object or a one-item array. */
+function normalizeFolderInfo(data: unknown): Pan115FolderInfoResp {
+  const value = Array.isArray(data) ? data[0] : data
+  return value && typeof value === "object"
+    ? (value as Pan115FolderInfoResp)
+    : ({} as Pan115FolderInfoResp)
+}
+
 /** 401 开头或 99 的错误码 → token 失效，需要刷新（对应 SDK Is401Started） */
 function isAuthError(code: number): boolean {
   return code === 99 || String(code).startsWith("401")
@@ -258,27 +266,24 @@ export class Pan115Client {
       asc: opts.asc ? "1" : "0",
       o: opts.o || "",
       show_dir: opts.showDir ? "1" : "0",
-      cur: "1",
     })) as Pan115GetFilesResp
     return { files: resp.data || [], count: resp.count || 0 }
   }
 
   public async getFolderInfo(fileId: string): Promise<Pan115FolderInfoResp> {
-    return (
-      await this.request(ApiFsGetFolderInfo, "GET", {
-        file_id: fileId,
-      })
-    )?.data as Pan115FolderInfoResp
+    const resp = await this.request(ApiFsGetFolderInfo, "GET", {
+      file_id: fileId,
+    })
+    return normalizeFolderInfo(resp?.data)
   }
 
   public async getFolderInfoByPath(
     path: string,
   ): Promise<Pan115FolderInfoResp> {
-    return (
-      await this.request(ApiFsGetFolderInfo, "POST", undefined, {
-        path,
-      })
-    )?.data as Pan115FolderInfoResp
+    const resp = await this.request(ApiFsGetFolderInfo, "POST", undefined, {
+      path,
+    })
+    return normalizeFolderInfo(resp?.data)
   }
 
   public async mkdir(pid: string, fileName: string): Promise<Pan115MkdirResp> {

@@ -301,8 +301,26 @@ export class Pan115Driver implements StorageDriver {
     }
     const file = await this.resolveFile(physicalPath)
     const item = pan115FileToFileItem(file)
-    if (file.fc !== "0" && file.pc) {
+    if (file.fc !== "0") {
+      let pickCode =
+        file.pc ||
+        (file as Pan115File & { pick_code?: string }).pick_code ||
+        ""
       try {
+        // 部分列表响应未带 pc；按文件 ID 查询详情补齐下载所需的 pick_code。
+        if (!pickCode) {
+          if (!this.reserve()) throw new Error("subrequest budget exceeded")
+          pickCode = (await this.client.getFolderInfo(file.fid)).pick_code || ""
+        }
+        if (!pickCode) {
+          item.raw_url_error =
+            "115 文件详情未返回 pick_code，无法生成下载链接。"
+          console.warn(
+            `[115open] no pick_code returned for ${file.fn} (${file.fid})`,
+          )
+          return item
+        }
+
         // 链接缓存（Go LinkCacheMode=UA）：同一 文件+UA 复用链接，节省 downurl 配额
         const cacheKey = `${file.fid}|${OPENLIST_UA}`
         const cached = this.linkCache.get(cacheKey)
@@ -311,7 +329,7 @@ export class Pan115Driver implements StorageDriver {
           item.raw_url_headers = { "User-Agent": OPENLIST_UA }
         } else {
           if (!this.reserve()) throw new Error("subrequest budget exceeded")
-          const resp = await this.client.downUrl(file.pc, OPENLIST_UA)
+          const resp = await this.client.downUrl(pickCode, OPENLIST_UA)
           const entry = resp[file.fid]
           if (entry?.url?.url) {
             item.raw_url = entry.url.url
@@ -320,16 +338,26 @@ export class Pan115Driver implements StorageDriver {
               url: entry.url.url,
               expire: Date.now() + Pan115Driver.LINK_TTL_MS,
             })
+          } else {
+            item.raw_url_error = "115 downurl 接口未返回该文件的下载地址。"
+            console.warn(
+              `[115open] downurl returned no URL for ${file.fn} (${file.fid})`,
+            )
           }
         }
       } catch (e: any) {
         const msg = String(e?.message || e)
         if (msg.includes("406")) {
+          item.raw_url_error = "115 downurl 接口配额已用尽（code 406），请稍后重试。"
           console.warn(
             "[115open] downurl 配额用尽（406）：已使用缓存或稍后重试",
           )
         } else {
-          console.warn(`[115open] downUrl warning for ${file.fn}:`, e.message)
+          item.raw_url_error = msg
+          console.warn(
+            `[115open] download link resolution failed for ${file.fn}:`,
+            e.message,
+          )
         }
       }
     }
