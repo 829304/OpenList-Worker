@@ -7,7 +7,8 @@ import {
   Cloud115DownResp,
 } from "./types"
 
-const API_BASE = "https://proapi.115.com/open"
+// Keep this as the host root; API paths below already start with /open/.
+const API_BASE = "https://proapi.115.com"
 const PASSPORT_BASE = "https://passportapi.115.com"
 const UA = "Mozilla/5.0 115disk/42.0.0.2"
 
@@ -39,32 +40,63 @@ export class Client115 {
     path: string,
     body: Record<string, any> = {},
     base: string = API_BASE,
+    method: "GET" | "POST" = "POST",
   ): Promise<T> {
-    const url = `${base}${path}`
+    const url = new URL(`${base}${path}`)
+    const headers: Record<string, string> = {
+      "User-Agent": UA,
+      Accept: "application/json",
+    }
+    const requestInit: RequestInit = { method, headers }
+
+    if (method === "GET") {
+      for (const [key, value] of Object.entries(body)) {
+        if (value !== undefined && value !== null) {
+          url.searchParams.set(key, String(value))
+        }
+      }
+    } else {
+      headers["Content-Type"] = "application/json"
+      requestInit.body = JSON.stringify(body)
+    }
+
     const resp = await fetch(url, {
-      method: "POST",
+      ...requestInit,
       headers: {
-        "User-Agent": UA,
-        Accept: "application/json",
-        "Content-Type": "application/json",
+        ...headers,
         Authorization: `Bearer ${this.accessToken}`,
       },
-      body: JSON.stringify(body),
     })
     const data: any = await resp.json().catch(() => ({}))
-    if (data?.state === false || data?.errno) {
+    const errorCode = data?.errno ?? data?.errcode ?? data?.code
+    const hasErrorCode =
+      errorCode !== undefined && errorCode !== null && String(errorCode) !== "0"
+    if (
+      !resp.ok ||
+      data?.state === false ||
+      data?.errno ||
+      data?.errcode ||
+      hasErrorCode
+    ) {
       // token 过期尝试刷新
       if (
         data.errno === 990001 ||
         data.errcode === 990001 ||
+        data.code === 990001 ||
         data.errno === 10008
       ) {
         await this.refreshAccessToken()
-        return this.request<T>(path, body, base)
+        return this.request<T>(path, body, base, method)
       }
-      throw new Error(
-        `[115] ${data.error || data.errmsg || "API error"} (${data.errno || data.errcode || ""})`,
-      )
+      const message =
+        data?.error ||
+        data?.errmsg ||
+        data?.message ||
+        data?.msg ||
+        data?.error_info ||
+        "API error"
+      const codeSuffix = hasErrorCode ? ` (${errorCode})` : ` (HTTP ${resp.status})`
+      throw new Error(`[115] ${message}${codeSuffix}`)
     }
     return data as T
   }
@@ -74,7 +106,7 @@ export class Client115 {
   }
 
   async refreshAccessToken(): Promise<void> {
-    const url = `${API_BASE}/oauth2/token`
+    const url = `${API_BASE}/open/oauth2/token`
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "User-Agent": UA },
@@ -97,33 +129,42 @@ export class Client115 {
   }
 
   async getFiles(cid: string): Promise<Cloud115File[]> {
-    const resp = await this.request<Cloud115ListResp>("/open/ufile/files", {
-      cid,
-      limit: 1000,
-      offset: 0,
-      order: this.addition.order_by || "user_utime",
-      asc: this.addition.order_direction === "asc" ? 1 : 0,
-      show_dir: 1,
-      fc_mix: 1,
-    })
-    if (resp?.data && Array.isArray(resp.data)) return resp.data
-    // 旧格式（小写字段）兼容
-    if (resp?.files && Array.isArray(resp.files)) {
-      return resp.files.map((f: any) => ({
-        Fid: f.fid ?? f.id,
-        Fn: f.n ?? f.file_name ?? f.name,
-        Fc: String(
-          f.fc ?? f.category ?? (f.pid !== undefined && !f.pid ? "0" : "1"),
-        ),
-        FS: Number(f.s ?? f.size ?? 0),
-        Sha1: f.sha1,
-        Pc: f.pc ?? f.pick_code,
-        Thumbnail: f.thumb ?? f.thumbnail,
-        Upt: f.tu ?? f.upt ?? f.updated_at,
-        Pid: f.pid ?? f.cid,
-      }))
-    }
-    return []
+    // 115's file-list endpoint is GET and returns lower-case file fields.
+    const resp = await this.request<Cloud115ListResp>(
+      "/open/ufile/files",
+      {
+        cid,
+        limit: 1000,
+        offset: 0,
+        o: this.addition.order_by || "user_utime",
+        asc: this.addition.order_direction === "asc" ? 1 : 0,
+        show_dir: 1,
+        cur: 1,
+      },
+      API_BASE,
+      "GET",
+    )
+    const files = Array.isArray(resp?.data)
+      ? resp.data
+      : Array.isArray(resp?.files)
+        ? resp.files
+        : []
+    return files.map((f: any) => ({
+      Fid: String(f.Fid ?? f.fid ?? f.id ?? ""),
+      Fn: String(f.Fn ?? f.fn ?? f.n ?? f.file_name ?? f.name ?? ""),
+      Fc: String(
+        f.Fc ??
+          f.fc ??
+          f.category ??
+          (f.pid !== undefined && !f.pid ? "0" : "1"),
+      ),
+      FS: Number(f.FS ?? f.fs ?? f.s ?? f.size ?? 0),
+      Sha1: f.Sha1 ?? f.sha1,
+      Pc: f.Pc ?? f.pc ?? f.pick_code,
+      Thumbnail: f.Thumbnail ?? f.thumbnail ?? f.thumb,
+      Upt: f.Upt ?? f.upt ?? f.tu ?? f.updated_at,
+      Pid: f.Pid ?? f.pid ?? f.cid,
+    }))
   }
 
   /** 通过路径逐级解析文件夹 ID（带缓存由 driver 层管理） */
