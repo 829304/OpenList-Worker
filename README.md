@@ -135,7 +135,7 @@ pnpm run deploy:worker
 - `CLOUDFLARE_API_TOKEN`：Cloudflare API Token，授权目标账户的 **Workers Scripts: Write** 和 **Workers KV Storage: Write**；并授权 `829304.xyz` 所属 Zone 的 **Workers Routes: Write**，用于首次创建自定义域名绑定。KV 权限用于首次部署自动创建配置中的 KV namespace。
 - `CLOUDFLARE_ACCOUNT_ID`：部署目标的 Cloudflare Account ID。
 
-工作流首次部署时会按 `wrangler.jsonc` 中无 `id` 的 KV 绑定自动创建并关联 namespace；后续部署复用该绑定。Worker 绑定到 `openlistwork.829304.xyz` 自定义域名，Cloudflare 会为该 hostname 创建 DNS 记录并签发证书；域名 Zone 需已激活在此 Cloudflare 账户中。
+工作流首次部署时会按 `wrangler.jsonc` 中无 `id` 的 KV 绑定自动创建并关联 namespace；后续部署复用该绑定。Worker 绑定到 `nextlist.829304.xyz` 自定义域名，Cloudflare 会为该 hostname 创建 DNS 记录并签发证书；域名 Zone 需已激活在此 Cloudflare 账户中。
 
 ---
 

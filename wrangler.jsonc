@@ -29,7 +29,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
-  "routes": [{ "pattern": "openlistwork.829304.xyz", "custom_domain": true }],
+  "routes": [{ "pattern": "nextlist.829304.xyz", "custom_domain": true }],
 
   // ⚠️ run_worker_first 只放行 HTML 入口，不能改成 true（全量放行）：
   //   默认「资源优先」时 / 与 /index.html 由静态层直接返回，Worker 根本不会执行，
