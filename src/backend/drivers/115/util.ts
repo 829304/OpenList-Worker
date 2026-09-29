@@ -9,7 +9,6 @@ import {
 
 // Keep this as the host root; API paths below already start with /open/.
 const API_BASE = "https://proapi.115.com"
-const PASSPORT_BASE = "https://passportapi.115.com"
 const UA = "Mozilla/5.0 115disk/42.0.0.2"
 
 export class Client115 {
@@ -113,7 +112,12 @@ export class Client115 {
   }
 
   async getUserInfo(): Promise<Cloud115UserInfoResp> {
-    return this.request<Cloud115UserInfoResp>("/user/info", {}, PASSPORT_BASE)
+    return this.request<Cloud115UserInfoResp>(
+      "/open/user/info",
+      {},
+      API_BASE,
+      "GET",
+    )
   }
 
   async refreshAccessToken(): Promise<void> {
