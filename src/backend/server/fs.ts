@@ -79,6 +79,7 @@ const getStorageRequestContext = (c: any) => {
     return {
       waitUntil: (promise: Promise<unknown>) => executionCtx.waitUntil(promise),
       env: c.env, // 传递 env 用于请求级 KV 缓存复用
+      userAgent: c.req.header("User-Agent") || "",
     }
   } catch {
     return undefined
@@ -1295,7 +1296,9 @@ fsRouter.post("/link", async (c) => {
     }
     const driver = await getDriver(resolved.storage.driver, resolved.storage)
     try {
-      const item = await driver.get(reqPath, resolved.physical ?? "/")
+      const item = await driver.get(reqPath, resolved.physical ?? "/", {
+        userAgent: c.req.header("User-Agent") || "",
+      })
       if (item && item.raw_url) {
         return c.json({
           code: 200,
@@ -1641,7 +1644,9 @@ async function fetchArchiveBytes(
   const driver = await getDriver(resolved.storage!.driver, resolved.storage)
   let item: any
   try {
-    item = await driver.get(virtualPath, resolved.physical!)
+    item = await driver.get(virtualPath, resolved.physical!, {
+      userAgent: c.req.header("User-Agent") || "",
+    })
   } finally {
     await flushPendingDriverState(
       resolved.storage!.driver,

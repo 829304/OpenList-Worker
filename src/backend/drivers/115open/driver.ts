@@ -2,6 +2,7 @@
 // Re-ported from: https://github.com/OpenListTeam/OpenList/tree/main/drivers/115_open
 // (driver.go — StorageDriver interface implementation)
 import {
+  DriverGetOptions,
   StorageDriver,
   FileItem,
   calcFileType,
@@ -292,7 +293,11 @@ export class Pan115Driver implements StorageDriver {
     throw new Error(`file not found: ${rawName}`)
   }
 
-  async get(_virtualPath: string, physicalPath: string): Promise<FileItem> {
+  async get(
+    _virtualPath: string,
+    physicalPath: string,
+    options?: DriverGetOptions,
+  ): Promise<FileItem> {
     this.budget.used = 0
     const clean =
       "/" +
@@ -314,6 +319,7 @@ export class Pan115Driver implements StorageDriver {
     const file = await this.resolveFile(physicalPath)
     const item = pan115FileToFileItem(file)
     if (file.fc !== "0") {
+      const userAgent = options?.userAgent?.trim() || OPENLIST_UA
       let pickCode =
         file.pc ||
         (file as Pan115File & { pick_code?: string }).pick_code ||
@@ -340,19 +346,19 @@ export class Pan115Driver implements StorageDriver {
         }
 
         // 链接缓存（Go LinkCacheMode=UA）：同一 文件+UA 复用链接，节省 downurl 配额
-        const cacheKey = `${file.fid}|${OPENLIST_UA}`
+        const cacheKey = `${file.fid}|${userAgent}`
         const cached = this.linkCache.get(cacheKey)
         if (cached && cached.expire > Date.now()) {
           item.raw_url = cached.url
-          item.raw_url_headers = { "User-Agent": OPENLIST_UA }
+          item.raw_url_headers = { "User-Agent": userAgent }
         } else {
           linkStage = "请求下载地址"
           if (!this.reserve()) throw new Error("subrequest budget exceeded")
-          const resp = await this.client.downUrl(pickCode, OPENLIST_UA)
+          const resp = await this.client.downUrl(pickCode, userAgent)
           const entry = resp[file.fid]
           if (entry?.url?.url) {
             item.raw_url = entry.url.url
-            item.raw_url_headers = { "User-Agent": OPENLIST_UA }
+            item.raw_url_headers = { "User-Agent": userAgent }
             this.linkCache.set(cacheKey, {
               url: entry.url.url,
               expire: Date.now() + Pan115Driver.LINK_TTL_MS,

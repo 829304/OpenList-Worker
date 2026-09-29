@@ -26,6 +26,11 @@ export interface FileItem {
   }
 }
 
+export interface DriverGetOptions {
+  /** Original request User-Agent; some providers bind download URLs to it. */
+  userAgent?: string
+}
+
 export function calcFileType(name: string, isDir: boolean): number {
   if (isDir) return 1 // FOLDER
   const ext = (name.split(".").pop() || "").toLowerCase()
@@ -139,7 +144,11 @@ export function calcFileType(name: string, isDir: boolean): number {
 export interface StorageDriver {
   init?(): Promise<void>
   list(virtualPath: string, physicalPath: string): Promise<FileItem[]>
-  get(virtualPath: string, physicalPath: string): Promise<FileItem>
+  get(
+    virtualPath: string,
+    physicalPath: string,
+    options?: DriverGetOptions,
+  ): Promise<FileItem>
   mkdir(virtualPath: string, physicalPath: string): Promise<void>
   rename(
     virtualPath: string,

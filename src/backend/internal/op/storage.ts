@@ -140,6 +140,7 @@ function setDriverCache(key: string, driver: StorageDriver): void {
 export interface StorageRequestContext {
   waitUntil?: (promise: Promise<unknown>) => void
   env?: any // ESA/Cloudflare env，用于请求级缓存复用
+  userAgent?: string
 }
 
 export interface GetDriverOptions {
@@ -1498,7 +1499,9 @@ export async function getItem(
   const driver = await getDriver(driverName, resolved.storage)
   let item: FileItem
   try {
-    item = await driver.get(virtualPath, resolved.physical!)
+    item = await driver.get(virtualPath, resolved.physical!, {
+      userAgent: requestContext?.userAgent,
+    })
   } finally {
     await flushPendingDriverState(
       driverName,
