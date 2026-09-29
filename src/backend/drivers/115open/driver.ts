@@ -9,7 +9,7 @@ import {
 } from "../../internal/driver/base"
 import { sortFileItems } from "../../internal/driver/sort"
 import { sha1, hmacSha1Base64 } from "../../pkg/crypto"
-import { Pan115Addition, Pan115File } from "./types"
+import { Pan115Addition, Pan115File, Pan115FolderInfoResp } from "./types"
 import { Pan115Client, ERR_OBJECT_NOT_FOUND } from "./util"
 
 /** OpenList Go base.UserAgent（与 Go 驱动一致，115 防盗链校验通过率高） */
@@ -33,6 +33,32 @@ function pan115FileToFileItem(f: Pan115File): FileItem {
     type: calcFileType(f.fn, isDir),
     thumb: f.thumbnail || f.fco || "",
     raw_url: "",
+  }
+}
+
+function pan115FolderInfoToFile(
+  info: Pan115FolderInfoResp,
+): Pan115File | null {
+  const fid = String(info.file_id || "").trim()
+  const category = String(info.file_category || "").trim()
+  const name = String(info.file_name || "")
+  if (!fid || !category || !name) return null
+
+  return {
+    fid,
+    aid: "1",
+    pid: "",
+    fc: category,
+    fn: name,
+    fco: "",
+    pc: String(info.pick_code || ""),
+    upt: Number.parseInt(String(info.utime || "0"), 10) || 0,
+    uet: 0,
+    uppt: Number.parseInt(String(info.ptime || "0"), 10) || 0,
+    sha1: String(info.sha1 || ""),
+    fs: Number(info.size_byte) || 0,
+    ico: "",
+    thumbnail: "",
   }
 }
 
@@ -108,17 +134,13 @@ export class Pan115Driver implements StorageDriver {
     // 非根目录挂载 → 计算路径前缀（Go Init parentPath）
     const rootId = this.getRootId()
     if (rootId !== "0") {
-      try {
-        const info = await this.client.getFolderInfo(rootId)
-        if (info.file_id !== "0") {
-          this.parentPath = `/${info.file_name}`
-          const paths = [...(info.paths || [])].reverse()
-          for (const p of paths) {
-            this.parentPath = `/${p.file_name}${this.parentPath}`
-          }
+      const info = await this.client.getFolderInfo(rootId)
+      if (info.file_id !== "0") {
+        this.parentPath = `/${info.file_name}`
+        const paths = [...(info.paths || [])].reverse()
+        for (const p of paths) {
+          this.parentPath = `/${p.file_name}${this.parentPath}`
         }
-      } catch (e: any) {
-        console.warn("[115open] init root path resolve failed:", e.message)
       }
     }
   }
@@ -136,7 +158,8 @@ export class Pan115Driver implements StorageDriver {
         .join("/")
     const rootId = this.getRootId()
     if (rootId === "0") return clean
-    return clean === "/" ? `/${rootId}` : `/${rootId}${clean}`
+    const rootPath = this.parentPath.replace(/\/$/, "")
+    return clean === "/" ? rootPath || "/" : `${rootPath}${clean}`
   }
 
   private reserve(): boolean {
@@ -246,7 +269,10 @@ export class Pan115Driver implements StorageDriver {
   }
 
   /** 解析物理路径 → 文件（Go getFromParent 逻辑：列父目录匹配，拿完整 pick_code） */
-  private async resolveFile(physicalPath: string): Promise<Pan115File> {
+  private async resolveFile(
+    physicalPath: string,
+    fileId?: string,
+  ): Promise<Pan115File> {
     const clean =
       "/" +
       String(physicalPath || "")
@@ -266,8 +292,8 @@ export class Pan115Driver implements StorageDriver {
     const parentPath = "/" + segs.join("/")
 
     const parentId = await this.resolveFolderId(parentPath)
-    // 分页列出父目录找文件（列表接口返回完整 pick_code；
-    // folder/get_info 只支持目录路径，对文件路径不可用）
+    // Fallback: page through the parent listing when path lookup is unavailable
+    // or file metadata is incomplete.
     let offset = 0
     for (;;) {
       if (!this.reserve()) throw new Error("subrequest budget exceeded")
@@ -279,18 +305,38 @@ export class Pan115Driver implements StorageDriver {
         o: "file_name",
         showDir: true,
       })
-      const hit = files.find(
-        (f) =>
-          f.fn === rawName ||
-          f.fn === decodedName ||
-          f.fid === rawName ||
-          f.fid === decodedName,
-      )
+      const hit = fileId
+        ? files.find((f) => f.fid === fileId)
+        : files.find(
+            (f) =>
+              f.fn === rawName ||
+              f.fn === decodedName ||
+              f.fid === rawName ||
+              f.fid === decodedName,
+          )
       if (hit) return hit
       if (files.length === 0 || offset + files.length >= count) break
       offset += files.length
     }
     throw new Error(`file not found: ${rawName}`)
+  }
+
+  /** Match OpenList Go Get: resolve the full path first; list the parent only as fallback. */
+  private async resolveFileByPath(
+    physicalPath: string,
+  ): Promise<Pan115File | null> {
+    if (!this.reserve()) throw new Error("subrequest budget exceeded")
+    try {
+      const info = await this.client.getFolderInfoByPath(
+        this.toApiPath(physicalPath),
+      )
+      return pan115FolderInfoToFile(info)
+    } catch (e: any) {
+      // The Go driver falls back to the parent listing when the object is not found.
+      // 990002 is also returned by 115 for paths it cannot resolve through get_info.
+      if (e?.code === ERR_OBJECT_NOT_FOUND || e?.code === 990002) return null
+      throw e
+    }
   }
 
   async get(
@@ -316,26 +362,27 @@ export class Pan115Driver implements StorageDriver {
         raw_url: "",
       }
     }
-    const file = await this.resolveFile(physicalPath)
+    let file =
+      (await this.resolveFileByPath(physicalPath)) ||
+      (await this.resolveFile(physicalPath))
+    if (file.fc !== "0" && file.upt <= 0 && file.fid) {
+      // Like Go Get, recover complete file metadata from the parent listing when
+      // get_info returns a file without a usable modification timestamp.
+      file = await this.resolveFile(physicalPath, file.fid)
+    } else if (file.fc !== "0" && !file.pc && file.fid) {
+      // Some get_info responses omit pick_code even when the file is otherwise valid.
+      const listed = await this.resolveFile(physicalPath, file.fid)
+      if (listed.pc) file = { ...file, pc: listed.pc }
+    }
     const item = pan115FileToFileItem(file)
     if (file.fc !== "0") {
       const userAgent = options?.userAgent?.trim() || OPENLIST_UA
-      let pickCode =
+      const pickCode =
         file.pc ||
         (file as Pan115File & { pick_code?: string }).pick_code ||
         ""
       let linkStage = "读取文件详情"
       try {
-        // 部分列表响应未带 pc；按文件路径查询详情补齐下载所需的 pick_code。
-        if (!pickCode) {
-          if (!this.reserve()) throw new Error("subrequest budget exceeded")
-          pickCode =
-            (
-              await this.client.getFolderInfoByPath(
-                this.toApiPath(physicalPath),
-              )
-            ).pick_code || ""
-        }
         if (!pickCode) {
           item.raw_url_error =
             "115 文件详情未返回 pick_code，无法生成下载链接。"
