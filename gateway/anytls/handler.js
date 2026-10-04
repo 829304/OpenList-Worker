@@ -82,6 +82,20 @@ export function failure(code, message) {
     },
   )
 }
+export function failureReason(error) {
+  const text = String(error?.message || "").toLowerCase()
+  if (/certificate|issuer|validity/.test(text)) return "certificate_validation"
+  if (/signature|finish message|mac mismatch|decrypt/.test(text))
+    return "tls_verification"
+  if (/target_connection_rejected/.test(text)) return "target_rejected"
+  if (/node_rejected_session/.test(text)) return "node_rejected"
+  if (/peer_closed|truncated/.test(text)) return "peer_closed"
+  if (/request_cancelled|abort/.test(text)) return "request_cancelled"
+  if (/different request|i\/o.*behalf/.test(text)) return "io_context"
+  if (/padding|anytls/.test(text)) return "anytls_protocol"
+  if (/alert/.test(text)) return "tls_alert"
+  return "transport_failure"
+}
 export function createGateway({
   connect,
   openTunnel = openAnyTls,
@@ -136,11 +150,27 @@ export function createGateway({
           status: response.status,
           headers: response.headers,
         })
-      } catch {
+      } catch (error) {
+        const reason = scope.timedOut ? "timeout" : failureReason(error)
+        console.warn(
+          JSON.stringify({
+            event: "anytls_failure",
+            stage: scope.stage,
+            reason,
+            errorType: [
+              "Error",
+              "TypeError",
+              "RangeError",
+              "DOMException",
+            ].includes(error?.name)
+              ? error.name
+              : "Error",
+          }),
+        )
         await scope.close()
         return failure(
           scope.timedOut ? 504 : 502,
-          `代理网关连接失败（${scope.stage}）`,
+          `代理网关连接失败（${scope.stage}: ${reason}）`,
         )
       }
     },

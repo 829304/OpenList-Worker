@@ -220,3 +220,43 @@ test("gateway identifies upstream HTTP errors separately from runtime errors", a
   assert.equal(response.headers.get("x-openlist-gateway-upstream"), "1")
   assert.equal(await response.text(), "{}")
 })
+
+test("TLS failure diagnostics contain a category but never certificate details or credentials", async () => {
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = (value) => warnings.push(value)
+  try {
+    const gateway = createGateway({
+      connect() {},
+      async openTunnel() {
+        return {}
+      },
+      async secure() {
+        const error = new Error(
+          "Certificate for sensitive-node-host has sensitive-password",
+        )
+        error.name = "sensitive-password"
+        throw error
+      },
+    })
+    const response = await gateway.fetch(
+      new Request("https://gateway.test/v1/request", {
+        method: "POST",
+        headers: { Authorization: "Bearer random-gateway-token-32-characters" },
+        body: JSON.stringify({ url: "https://proapi.115.com/", headers: [] }),
+      }),
+      {
+        GATEWAY_TOKEN: "random-gateway-token-32-characters",
+        ANYTLS_SERVER: "node.test",
+        ANYTLS_PORT: "443",
+        ANYTLS_PASSWORD: "sensitive-password",
+      },
+    )
+    assert.equal(response.status, 502)
+    const details = (await response.text()) + JSON.stringify(warnings)
+    assert.match(details, /certificate_validation/)
+    assert.doesNotMatch(details, /sensitive-password|sensitive-node-host/)
+  } finally {
+    console.warn = originalWarn
+  }
+})
