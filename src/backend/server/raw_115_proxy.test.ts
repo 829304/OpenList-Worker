@@ -10,7 +10,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 
-test("115 gateway requires file proxy even with an old redirect policy; blank preserves redirect", () => {
+test("115 API gateway does not override the storage redirect policy", () => {
   for (const api_proxy_url of ["", "https://gateway.example.com"]) {
     const decision = resolveProxyDecision(
       {
@@ -21,12 +21,13 @@ test("115 gateway requires file proxy even with an old redirect policy; blank pr
       "115open",
       false,
     )
-    assert.equal(decision.needsProxy, Boolean(api_proxy_url))
+    assert.equal(decision.mode, "302_redirect")
+    assert.equal(decision.needsProxy, false)
   }
 })
 
-for (const rejectRetry of [false, true]) {
-  test(`115 raw download uses gateway for APIs and ${rejectRetry ? "reports Range retry failure" : "streams Range bytes"}`, async () => {
+for (const mode of ["redirect", "proxy", "range-retry"] as const) {
+  test(`115 API gateway keeps file delivery separate: ${mode}`, async () => {
     const token = "test-gateway-token-32-characters"
     const target = "https://cdn.115cdn.net/file"
     const env: any = {}
@@ -38,7 +39,10 @@ for (const rejectRetry of [false, true]) {
         metas: [],
         storages: [
           {
-            id: `gateway-${rejectRetry}`,
+            id: `gateway-${mode}`,
+            webdav_policy:
+              mode === "redirect" ? "302_redirect" : "native_proxy",
+            web_proxy: false,
             mount_path: "/115",
             driver: "115Open",
             status: "work",
@@ -57,6 +61,28 @@ for (const rejectRetry of [false, true]) {
     )
     let downloads = 0
     globalThis.fetch = (async (input, init) => {
+      if (String(input) === target) {
+        assert.notEqual(
+          mode,
+          "redirect",
+          "302 must not fetch the file in Worker",
+        )
+        const headers = new Headers(init?.headers)
+        assert.equal(headers.get("authorization"), null)
+        assert.equal(headers.get("user-agent"), "Download-UA")
+        downloads++
+        if (downloads === 1) {
+          assert.equal(headers.get("range"), "bytes=0-3")
+          if (mode === "range-retry") return new Response(null, { status: 412 })
+        } else assert.equal(headers.get("range"), null)
+        return new Response("test", {
+          status: mode === "range-retry" ? 200 : 206,
+          headers: {
+            "Content-Length": "4",
+            ...(mode === "proxy" ? { "Content-Range": "bytes 0-3/100" } : {}),
+          },
+        })
+      }
       assert.equal(String(input), "https://gateway.example.com/v1/request")
       assert.equal(
         new Headers(init?.headers).get("authorization"),
@@ -88,22 +114,7 @@ for (const rejectRetry of [false, true]) {
           data: { "1": { url: { url: target } } },
         })
       }
-      assert.equal(request.url, target)
-      assert.equal(headers.get("user-agent"), "Download-UA")
-      downloads++
-      if (downloads === 1) {
-        assert.equal(headers.get("range"), "bytes=0-3")
-        if (rejectRetry) return new Response(null, { status: 412 })
-        return new Response("test", {
-          status: 206,
-          headers: { "Content-Range": "bytes 0-3/100", "Content-Length": "4" },
-        })
-      }
-      assert.equal(headers.get("range"), null)
-      return Response.json(
-        { message: "hidden-secret" },
-        { status: 502, headers: { "X-OpenList-Gateway-Error": "1" } },
-      )
+      assert.fail("Only 115 API requests may use the API gateway")
     }) as typeof fetch
     const app = new Hono()
     app.route("/api/d", rawRouter)
@@ -112,11 +123,15 @@ for (const rejectRetry of [false, true]) {
       { headers: { Range: "bytes=0-3", "User-Agent": "Download-UA" } },
       env,
     )
-    assert.equal(response.status, rejectRetry ? 502 : 206)
-    const body = await response.text()
-    if (rejectRetry) assert.match(body, /HTTP 502/)
-    else assert.equal(body, "test")
-    assert.ok(!body.includes(token) && !body.includes("hidden-secret"))
-    assert.equal(downloads, rejectRetry ? 2 : 1)
+    if (mode === "redirect") {
+      assert.equal(response.status, 302)
+      assert.equal(response.headers.get("location"), target)
+      assert.equal(downloads, 0)
+    } else {
+      assert.equal(response.status, mode === "proxy" ? 206 : 200)
+      assert.equal(await response.text(), "test")
+      assert.equal(downloads, mode === "range-retry" ? 2 : 1)
+    }
+    assert.ok(!response.headers.get("location")?.includes(token))
   })
 }

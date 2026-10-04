@@ -1342,7 +1342,7 @@ const driverConfigs: Record<string, any> = {
         type: "string",
         default: "",
         required: false,
-        help: "API 代理地址：填写 HTTPS 网关地址后，115 的接口、令牌刷新和文件下载均通过该网关；留空直连。",
+        help: "API 代理地址：填写 HTTPS 网关地址后，115 的接口和令牌刷新通过网关；播放与下载仍按存储的下载策略执行，302 模式由客户端直连网盘。留空直连 API。",
       },
       {
         name: "api_proxy_token",
