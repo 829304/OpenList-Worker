@@ -2,6 +2,11 @@
 // Re-ported from: https://github.com/OpenListTeam/OpenList/tree/main/drivers/115_open
 // + https://github.com/OpenListTeam/115-sdk-go (authRequest / token refresh / fs API)
 import {
+  ApiProxyError,
+  fetchViaApiProxy,
+  getApiProxyConfig,
+} from "../../pkg/api-proxy"
+import {
   Pan115Addition,
   Pan115DownUrlResp,
   Pan115FolderInfoResp,
@@ -162,7 +167,9 @@ export class Pan115Client {
     }
     matches.sort((a, b) => b.path.length - a.path.length)
     return {
-      value: matches.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),
+      value: matches
+        .map((cookie) => `${cookie.name}=${cookie.value}`)
+        .join("; "),
       names: matches.map((cookie) => cookie.name),
     }
   }
@@ -214,7 +221,10 @@ export class Pan115Client {
       }
       const key = `${domain}\t${path}\t${name}`
       if (maxAge !== undefined) expiresAt = Date.now() + maxAge * 1000
-      if (maxAge === 0 || (expiresAt !== undefined && expiresAt <= Date.now())) {
+      if (
+        maxAge === 0 ||
+        (expiresAt !== undefined && expiresAt <= Date.now())
+      ) {
         this.cookieJar.delete(key)
         receivedNames.push(name)
         continue
@@ -238,17 +248,23 @@ export class Pan115Client {
     url: string,
     init: RequestInit,
   ): Promise<Response> {
+    const proxy = getApiProxyConfig(this.addition)
     let lastErr: unknown
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), 20000)
         try {
-          return await fetch(url, { ...init, signal: controller.signal })
+          return await fetchViaApiProxy(
+            url,
+            { ...init, signal: controller.signal },
+            proxy,
+          )
         } finally {
           clearTimeout(timer)
         }
       } catch (e) {
+        if (e instanceof ApiProxyError && !e.retryable) throw e
         lastErr = e
         if (attempt < 2) {
           await new Promise((r) => setTimeout(r, 500 * (attempt + 1)))

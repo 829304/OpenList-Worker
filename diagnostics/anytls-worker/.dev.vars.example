@@ -1,0 +1,9 @@
+ANYTLS_SERVER=your-node-hostname
+ANYTLS_PORT=443
+ANYTLS_SNI=your-node-sni
+ANYTLS_PASSWORD=your-node-password
+ANYTLS_ALPN=["h2","http/1.1"]
+ANYTLS_INSECURE=false
+TEST_TOKEN=replace-with-a-random-test-token
+# Optional, used only by POST /115 and POST /115-direct:
+PAN115_ACCESS_TOKEN=

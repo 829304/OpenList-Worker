@@ -1,0 +1,5 @@
+ANYTLS_SERVER=your-hong-kong-node-hostname
+ANYTLS_PORT=443
+ANYTLS_SNI=your-node-sni
+ANYTLS_PASSWORD=your-node-password
+GATEWAY_TOKEN=replace-with-a-random-token-at-least-32-characters

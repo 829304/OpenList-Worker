@@ -27,6 +27,10 @@
   "main": "src/backend/worker.ts",
   "compatibility_date": "2026-08-04",
   "compatibility_flags": ["nodejs_compat"],
+  // 在靠近香港的 Cloudflare 节点执行，以测试 115 API 在不同出口下的表现。
+  "placement": {
+    "region": "gcp:asia-east2"
+  },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1

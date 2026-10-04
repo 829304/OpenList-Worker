@@ -1338,6 +1338,20 @@ const driverConfigs: Record<string, any> = {
     ],
     additional: [
       {
+        name: "api_proxy_url",
+        type: "string",
+        default: "",
+        required: false,
+        help: "API 代理地址：填写 HTTPS 网关地址后，115 的接口、令牌刷新和文件下载均通过该网关；留空直连。",
+      },
+      {
+        name: "api_proxy_token",
+        type: "string",
+        default: "",
+        required: false,
+        help: "代理密钥：与网关配置中的访问密钥一致，填写代理地址时必填。",
+      },
+      {
         name: "access_token",
         type: "string",
         default: "",

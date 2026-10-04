@@ -13,6 +13,12 @@ import { safeErrorMessage } from "../pkg/errs"
 import { encodeDownloadPath } from "../pkg/path"
 import { assertSafeUrl, getTrustedHosts } from "../pkg/http"
 import {
+  ApiProxyError,
+  fetchViaApiProxy,
+  getApiProxyConfig,
+  type ApiProxyConfig,
+} from "../pkg/api-proxy"
+import {
   resolveProxyDecision,
   getDownProxyUrl,
   getDisableProxySign,
@@ -81,6 +87,7 @@ async function safeProxyFetch(
   url: string,
   headers: Record<string, string>,
   allowHosts?: ReadonlySet<string> | string[],
+  apiProxy: ApiProxyConfig | null = null,
 ): Promise<Response> {
   const MAX_REDIRECTS = 5
   let current = url
@@ -92,10 +99,14 @@ async function safeProxyFetch(
       throw new Error(e?.message || "SSRF blocked: restricted destination")
     }
 
-    const res = await fetch(current, {
-      headers: currentHeaders,
-      redirect: "manual",
-    })
+    const res = await fetchViaApiProxy(
+      current,
+      {
+        headers: currentHeaders,
+        redirect: "manual",
+      },
+      apiProxy,
+    )
 
     const location = res.headers.get("location")
     if (res.status >= 300 && res.status < 400 && location) {
@@ -215,9 +226,20 @@ async function proxyUpstream(
   })
 
   let upstreamRes: Response
+  let apiProxy: ApiProxyConfig | null = null
   try {
-    upstreamRes = await safeProxyFetch(fileItem.raw_url, headers, trustedHosts)
+    apiProxy =
+      driver.toLowerCase().replace(/[^a-z0-9]/g, "") === "115open"
+        ? getApiProxyConfig(opts.storage?.addition)
+        : null
+    upstreamRes = await safeProxyFetch(
+      fileItem.raw_url,
+      headers,
+      trustedHosts,
+      apiProxy,
+    )
   } catch (ssrfErr: any) {
+    if (ssrfErr instanceof ApiProxyError) return c.text(ssrfErr.message, 502)
     return c.text(ssrfErr.message || "SSRF blocked", 403)
   }
 
@@ -229,7 +251,18 @@ async function proxyUpstream(
       `[rawRouter] Upstream ignored/refused Range (status=${upstreamRes.status}) for '${reqPath}', retrying without Range header...`,
     )
     delete headers["Range"]
-    upstreamRes = await safeProxyFetch(fileItem.raw_url, headers, trustedHosts)
+    await upstreamRes.body?.cancel().catch(() => {})
+    try {
+      upstreamRes = await safeProxyFetch(
+        fileItem.raw_url,
+        headers,
+        trustedHosts,
+        apiProxy,
+      )
+    } catch (error: any) {
+      if (error instanceof ApiProxyError) return c.text(error.message, 502)
+      throw error
+    }
   }
 
   // ---- 二次校验：按上游实际回传的大小再判一次 ----
@@ -345,11 +378,7 @@ async function buildDownProxyUrl(
 
   if (!getDisableProxySign(storage) && !/[?&]sign=/.test(url)) {
     try {
-      const sign = await signDownloadPath(
-        c,
-        reqPath,
-        await getSignExpiresIn(c),
-      )
+      const sign = await signDownloadPath(c, reqPath, await getSignExpiresIn(c))
       if (sign) url += (url.includes("?") ? "&" : "?") + "sign=" + sign
     } catch (e: any) {
       console.warn(
@@ -376,10 +405,7 @@ rawRouter.get("/*", async (c) => {
     c.req.path.startsWith("/p") || c.req.path.startsWith("/api/p")
 
   // Strip the route prefix once, preserving mount names such as /pikpak_webdav.
-  const rawPath = c.req.path.replace(
-    /^\/(?:api\/)?(?:raw|sd|d|p)(?=\/|$)/,
-    "",
-  )
+  const rawPath = c.req.path.replace(/^\/(?:api\/)?(?:raw|sd|d|p)(?=\/|$)/, "")
 
   // 非法百分号转义（如手工拼出的 `/api/p/100%.txt`）会让 decodeURIComponent
   // 抛 URIError。Go 侧因为 raw_url 走 EncodePath 编码过 `%`，正常流程不会出现；

@@ -1,0 +1,6 @@
+{
+  "name": "openlist-anytls-worker-test",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@reclaimprotocol/tls": "0.1.4" }
+}

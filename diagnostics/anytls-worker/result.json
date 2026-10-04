@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-04",
+  "placement": "gcp:asia-east2",
+  "public_https_trace": {
+    "http_status": 200,
+    "exit_country": "HK",
+    "target_colo": "HKG",
+    "outer_tls_verified": true,
+    "inner_tls_verified": true
+  },
+  "direct": {
+    "ok": true,
+    "transport": "cf-fetch",
+    "get_info": {
+      "http_status": 200,
+      "state": true,
+      "code": 0
+    },
+    "downurl": {
+      "http_status": 200,
+      "state": false,
+      "code": 590031,
+      "has_download_url": false
+    },
+    "anytls_ack": false,
+    "inner_tls_verified": false,
+    "elapsed_ms": 594
+  },
+  "anytls": {
+    "ok": true,
+    "transport": "anytls",
+    "get_info": {
+      "http_status": 200,
+      "state": true,
+      "code": 0
+    },
+    "downurl": {
+      "http_status": 200,
+      "state": true,
+      "code": 0,
+      "has_download_url": true
+    },
+    "anytls_ack": false,
+    "outer_tls_verified": true,
+    "outer_tls_version": "TLS1_3",
+    "inner_tls_verified": true,
+    "elapsed_ms": 3021
+  },
+  "scope": "Retrieving a download URL only; no file content transfer or production driver integration."
+}

@@ -128,14 +128,17 @@ pnpm run deploy:worker
 
 ### 使用 GitHub Actions 自动部署到 Cloudflare Workers
 
-仓库提供 `.github/workflows/deploy-cloudflare.yml`：推送到 `main` 分支且修改了部署相关文件时自动部署，也可以在 GitHub 仓库的 **Actions** 页面手动运行 `Deploy to Cloudflare Workers`。
+仓库提供 `.github/workflows/deploy-cloudflare.yml`：推送到 `main` 分支且修改了部署相关文件（包括 `gateway/anytls/**`）时自动部署，也可以在 GitHub 仓库的 **Actions** 页面手动运行 `Deploy to Cloudflare Workers`。工作流先构建、测试并部署 115 AnyTLS 网关，再部署 OpenList。
 
 首次部署前，在 **Settings → Secrets and variables → Actions** 添加以下 Repository secrets：
 
 - `CLOUDFLARE_API_TOKEN`：Cloudflare API Token，授权目标账户的 **Workers Scripts: Write** 和 **Workers KV Storage: Write**；并授权 `829304.xyz` 所属 Zone 的 **Workers Routes: Write**，用于首次创建自定义域名绑定。KV 权限用于首次部署自动创建配置中的 KV namespace。
 - `CLOUDFLARE_ACCOUNT_ID`：部署目标的 Cloudflare Account ID。
+- `ADMIN_PASS`：首次初始化管理员的密码，现有工作流要求配置此 Secret。
 
 工作流首次部署时会按 `wrangler.jsonc` 中无 `id` 的 KV 绑定自动创建并关联 namespace；后续部署复用该绑定。Worker 绑定到 `nextlist.829304.xyz` 自定义域名，Cloudflare 会为该 hostname 创建 DNS 记录并签发证书；域名 Zone 需已激活在此 Cloudflare 账户中。
+
+网关绑定到 `115-gateway.829304.xyz`。AnyTLS 节点凭据和网关密钥保存在该 Worker 的 Cloudflare Secrets 中，自动部署会保留它们。首次配置与 115 存储的代理字段见 [网关部署说明](gateway/anytls/README.md)。
 
 ---
 

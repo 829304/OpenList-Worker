@@ -1,0 +1,16 @@
+{
+  "name": "openlist-anytls-gateway",
+  "main": "build/worker.js",
+  "compatibility_date": "2026-08-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "115-gateway.829304.xyz", "custom_domain": true }],
+  "placement": { "region": "gcp:asia-east2" },
+  "observability": { "enabled": false },
+  "vars": {
+    "ALLOWED_HOSTS": "proapi.115.com,passportapi.115.com,*.115cdn.net",
+    "ANYTLS_INSECURE": "false",
+    "ANYTLS_ALPN": "[\"h2\",\"http/1.1\"]",
+  },
+}

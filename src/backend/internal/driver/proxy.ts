@@ -232,6 +232,14 @@ export function driverMustProxyForStorage(
   const norm = normalizeDriverName(driver ?? storage?.driver)
   if (DRIVER_FORCE_PROXY.has(norm)) return true
   if (norm === "bunnystorage") return bunnyStorageNeedsProxy(storage)
+  // 115 下载链接可能绑定节点出口，配置 API 网关时字节流也必须走该网关。
+  if (norm === "115open") {
+    return (
+      String(
+        parseAdditionLoose(storage?.addition).api_proxy_url ?? "",
+      ).trim() !== ""
+    )
+  }
   return false
 }
 

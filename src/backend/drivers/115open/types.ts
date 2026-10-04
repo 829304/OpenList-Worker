@@ -17,6 +17,10 @@ export interface Pan115Addition {
   refresh_token?: string
   /** 根文件夹 ID，默认 "0" */
   root_id?: string
+  /** HTTPS AnyTLS 网关地址；留空使用原生直连 */
+  api_proxy_url?: string
+  /** 网关访问密钥，与 115 自身的访问令牌分开 */
+  api_proxy_token?: string
 }
 
 // --- API 响应类型（115 开放平台 proapi.115.com） ---
