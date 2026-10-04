@@ -186,3 +186,37 @@ test("authentication and validation run before the node is contacted; credential
   assert.equal(calls, 1)
   assert.doesNotMatch(await failed.text(), /node-password|secret/)
 })
+
+test("gateway identifies upstream HTTP errors separately from runtime errors", async () => {
+  const gateway = createGateway({
+    connect() {},
+    async openTunnel() {
+      return {}
+    },
+    async secure() {
+      return {
+        ...transport(
+          "HTTP/1.1 503 Unavailable\r\nContent-Length: 2\r\nX-OpenList-Gateway-Upstream: spoof\r\n\r\n{}",
+        ),
+        metadata: {},
+        async write() {},
+      }
+    },
+  })
+  const response = await gateway.fetch(
+    new Request("https://gateway.test/v1/request", {
+      method: "POST",
+      headers: { Authorization: "Bearer random-gateway-token-32-characters" },
+      body: JSON.stringify({ url: "https://proapi.115.com/", headers: [] }),
+    }),
+    {
+      GATEWAY_TOKEN: "random-gateway-token-32-characters",
+      ANYTLS_SERVER: "node.test",
+      ANYTLS_PORT: "443",
+      ANYTLS_PASSWORD: "secret",
+    },
+  )
+  assert.equal(response.status, 503)
+  assert.equal(response.headers.get("x-openlist-gateway-upstream"), "1")
+  assert.equal(await response.text(), "{}")
+})

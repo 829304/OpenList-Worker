@@ -139,3 +139,44 @@ test("gateway download transport preserves Range and restores HEAD metadata", as
   assert.equal(response.headers.get("content-length"), "1000")
   assert.equal(response.headers.get("x-openlist-gateway-head-length"), null)
 })
+
+test("Cloudflare's empty 503 is retried as a gateway failure without refreshing 115 tokens", async () => {
+  let calls = 0
+  globalThis.fetch = (async (input, init) => {
+    assert.equal(String(input), "https://gateway.example.com/v1/request")
+    assert.equal(
+      new URL(JSON.parse(String(init?.body)).url).pathname,
+      "/open/user/info",
+    )
+    if (!calls++) return new Response(null, { status: 503 })
+    return Response.json(
+      { state: true, code: 0, data: { user_id: 1 } },
+      { headers: { "X-OpenList-Gateway-Upstream": "1" } },
+    )
+  }) as typeof fetch
+  assert.equal(
+    (
+      await new Pan115Client({
+        ...proxy,
+        access_token: "provider-token",
+      }).userInfo()
+    ).user_id,
+    1,
+  )
+  assert.equal(calls, 2)
+})
+
+test("marked 115 upstream 503 remains an upstream response", async () => {
+  globalThis.fetch = (async () =>
+    Response.json(
+      { state: false, code: 503, message: "upstream unavailable" },
+      { status: 503, headers: { "X-OpenList-Gateway-Upstream": "1" } },
+    )) as typeof fetch
+  const response = await fetchViaApiProxy(
+    "https://proapi.115.com/open/user/info",
+    {},
+    getApiProxyConfig(proxy),
+  )
+  assert.equal(response.status, 503)
+  assert.equal((await response.json()).message, "upstream unavailable")
+})

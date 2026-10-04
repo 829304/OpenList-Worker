@@ -80,11 +80,18 @@ export async function fetchViaApiProxy(
     signal: init.signal,
     redirect: "manual",
   })
-  if (response.headers.get("x-openlist-gateway-error") === "1") {
+  const gatewayFailure =
+    response.headers.get("x-openlist-gateway-error") === "1"
+  // Cloudflare can terminate a gateway before its handler returns (e.g. CPU
+  // exhaustion), producing an empty 503 without our normal error envelope.
+  const runtimeFailure =
+    response.status >= 500 &&
+    response.headers.get("x-openlist-gateway-upstream") !== "1"
+  if (gatewayFailure || runtimeFailure) {
     await response.body?.cancel().catch(() => {})
     throw new ApiProxyError(
       `API 代理网关请求失败（HTTP ${response.status}）`,
-      response.status === 502 || response.status === 504,
+      response.status >= 500,
     )
   }
   const headLength = response.headers.get("x-openlist-gateway-head-length")

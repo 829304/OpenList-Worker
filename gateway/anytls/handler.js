@@ -4,7 +4,7 @@ import { openAnyTls } from "./protocol.js"
 import { wrapTls } from "./tls.js"
 
 const DEFAULT_HOSTS = "proapi.115.com,passportapi.115.com,*.115cdn.net"
-function authorized(request, secret) {
+export function authorized(request, secret) {
   if (!secret || secret.length < 16) return false
   const supplied = request.headers.get("authorization") || ""
   return timingSafeEqual(
@@ -73,7 +73,7 @@ async function readEnvelope(request) {
   }
   return JSON.parse(new TextDecoder().decode(bytes))
 }
-function failure(code, message) {
+export function failure(code, message) {
   return Response.json(
     { code, message, data: null },
     {
@@ -131,6 +131,7 @@ export function createGateway({
         await target.write(input.bytes)
         scope.stage = "response_headers"
         const response = await readHttpResponse(target, input.method, scope)
+        response.headers.set("X-OpenList-Gateway-Upstream", "1")
         return new Response(response.body, {
           status: response.status,
           headers: response.headers,

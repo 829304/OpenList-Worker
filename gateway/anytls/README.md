@@ -59,8 +59,10 @@ npm run build
 
 默认只允许 `proapi.115.com`、`passportapi.115.com` 和 `*.115cdn.net` 的 HTTPS 443 端口，请求方法为 GET、POST、HEAD。请求体上限 512 KiB；响应流式传输，支持 Content-Length、chunked、Range。OpenList 检查重定向并逐次重新请求，网关不自动跟随重定向。
 
-每个 HTTP 请求建立独立 AnyTLS/TLS 连接。响应头阶段最长 30 秒，响应体连续空闲 60 秒会断开；仍受 Cloudflare 套餐的 CPU、子请求和运行时限制。已验证真实 115 文件下载；大文件吞吐和并发能力需要按实际使用量继续评估。
+入口 Worker 仅鉴权和转发；每个 HTTP 请求使用独立的 SQLite Durable Object 执行 AnyTLS/TLS 及响应流处理，不写入持久化数据。这样避免免费 Worker 的 10 毫秒 CPU 上限导致间歇性空 503；Durable Object 默认每次调用的 CPU 上限为 30 秒，并可在免费套餐使用。配置中的 `ANYTLS_SESSIONS` 绑定和 SQLite migration 会在部署时自动创建，Secrets 仍属于同一网关 Worker。参见 [CPU 限制](https://developers.cloudflare.com/durable-objects/platform/limits/) 和 [免费额度](https://developers.cloudflare.com/durable-objects/platform/pricing/)。
 
-网关错误带 `X-OpenList-Gateway-Error: 1`，只返回阶段和通用错误，不返回节点密码或上游请求内容。上游的正常 HTTP 错误保留原状态码。
+每个请求仍建立独立 AnyTLS/TLS 连接。响应头阶段最长 30 秒，响应体连续空闲 60 秒会断开；仍受 Durable Object 的 CPU、请求数及计算时长额度限制。响应流结束或取消时关闭连接。已验证真实 115 文件下载；大文件吞吐和并发能力需要按实际使用量继续评估。
+
+网关错误带 `X-OpenList-Gateway-Error: 1`，只返回阶段和通用错误，不返回节点密码或上游请求内容。真实上游响应带 `X-OpenList-Gateway-Upstream: 1`，上游的正常 HTTP 错误保留原状态码；缺少此标记的 HTTP 5xx 被 OpenList 识别为网关故障，避免把 Cloudflare 的空 503 当成 115 API 错误。
 
 TLS 实现使用 `@reclaimprotocol/tls`；许可见 [THIRD_PARTY_LICENSES.txt](./THIRD_PARTY_LICENSES.txt)。

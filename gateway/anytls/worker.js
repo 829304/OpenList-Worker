@@ -25,5 +25,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 import { connect } from "cloudflare:sockets"
+import { DurableObject } from "cloudflare:workers"
 import { createGateway } from "./handler.js"
-export default createGateway({ connect })
+import { createIngress } from "./ingress.js"
+
+export class AnyTlsSession extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env)
+    this.gateway = createGateway({ connect })
+  }
+  fetch(request) {
+    return this.gateway.fetch(request, this.env)
+  }
+}
+
+export default createIngress()

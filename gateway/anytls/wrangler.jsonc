@@ -8,6 +8,12 @@
   "routes": [{ "pattern": "115-gateway.829304.xyz", "custom_domain": true }],
   "placement": { "region": "gcp:asia-east2" },
   "observability": { "enabled": false },
+  "durable_objects": {
+    "bindings": [{ "name": "ANYTLS_SESSIONS", "class_name": "AnyTlsSession" }],
+  },
+  "migrations": [
+    { "tag": "v1-anytls-session", "new_sqlite_classes": ["AnyTlsSession"] },
+  ],
   "vars": {
     "ALLOWED_HOSTS": "proapi.115.com,passportapi.115.com,*.115cdn.net",
     "ANYTLS_INSECURE": "false",
