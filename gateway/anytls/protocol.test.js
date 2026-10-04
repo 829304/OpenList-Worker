@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { ByteReader, concat } from "./bytes.js"
-import { frame, padPacket, parsePadding } from "./protocol.js"
+import { ByteReader, concat, encode } from "./bytes.js"
+import { frame, openAnyTls, padPacket, parsePadding } from "./protocol.js"
 
 test("AnyTLS framing survives packet splitting and waste padding", async () => {
   const data = concat(frame(1, 1), frame(2, 1, new Uint8Array([1, 2, 3, 4])))
@@ -25,4 +25,56 @@ test("malformed or excessive server padding schemes are rejected", () => {
     "stop=1\n0=1-65536",
   ])
     assert.throws(() => parsePadding(value))
+})
+
+test("a padding update from one TCP session cannot change another session's authentication", async () => {
+  const lengths = []
+  for (let i = 0; i < 2; i++) {
+    let response = concat(
+      frame(6, 0, encode("stop=2\n0=12-12\n1=20-20")),
+      frame(2, 1, new Uint8Array([123])),
+    )
+    const tunnel = await openAnyTls(
+      () => ({
+        opened: Promise.resolve(),
+        closed: Promise.resolve(),
+        readable: new ReadableStream(),
+        writable: new WritableStream(),
+      }),
+      {
+        ANYTLS_SERVER: "node.test",
+        ANYTLS_PORT: "443",
+        ANYTLS_PASSWORD: "test-password",
+      },
+      new URL("https://proapi.115.com/"),
+      {
+        signal: new AbortController().signal,
+        touch() {},
+      },
+      {
+        async secure() {
+          let writes = 0
+          return {
+            async write(bytes) {
+              if (!writes++)
+                lengths.push(
+                  new DataView(
+                    bytes.buffer,
+                    bytes.byteOffset,
+                    bytes.byteLength,
+                  ).getUint16(32),
+                )
+            },
+            async read() {
+              const value = response
+              response = undefined
+              return value
+            },
+          }
+        },
+      },
+    )
+    assert.deepEqual(await tunnel.read(), new Uint8Array([123]))
+  }
+  assert.deepEqual(lengths, [30, 30])
 })

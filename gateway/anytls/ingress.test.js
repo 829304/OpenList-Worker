@@ -18,7 +18,7 @@ test("unauthorized requests and health checks never allocate a TLS session", asy
   const env = {
     GATEWAY_TOKEN: token,
     ANYTLS_SESSIONS: {
-      newUniqueId() {
+      idFromName() {
         assert.fail("must not allocate")
       },
     },
@@ -35,13 +35,14 @@ test("unauthorized requests and health checks never allocate a TLS session", asy
     405,
   )
 })
-test("each request uses an independent Durable Object and preserves the response stream", async () => {
+test("reused executors keep requests and their response streams independent", async () => {
   let next = 0
-  const ingress = createIngress()
+  const ingress = createIngress({ selectSession: () => 0 })
   const env = {
     GATEWAY_TOKEN: token,
     ANYTLS_SESSIONS: {
-      newUniqueId() {
+      idFromName(name) {
+        assert.equal(name, "anytls-0")
         return ++next
       },
       get(id, options) {
@@ -82,7 +83,7 @@ test("session runtime failures become gateway errors with no exception details",
   const env = {
     GATEWAY_TOKEN: token,
     ANYTLS_SESSIONS: {
-      newUniqueId() {
+      idFromName() {
         return 1
       },
       get() {

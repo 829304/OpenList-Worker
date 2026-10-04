@@ -1,8 +1,11 @@
 import { authorized, failure } from "./handler.js"
 
 // Keep the public Worker within its 10ms Free CPU budget. TLS and response
-// processing execute entirely inside a separate Durable Object for each request.
-export function createIngress() {
+// processing execute inside a small pool of Durable Objects. Reusing executors
+// retains parsed trust roots, while every request still owns its own sockets.
+export function createIngress({
+  selectSession = () => Math.floor(Math.random() * 4),
+} = {}) {
   return {
     async fetch(request, env) {
       if (!authorized(request, env.GATEWAY_TOKEN))
@@ -21,7 +24,7 @@ export function createIngress() {
       if (request.method !== "POST") return failure(405, "请使用 POST 请求网关")
       if (!env.ANYTLS_SESSIONS) return failure(503, "网关会话服务尚未配置")
       try {
-        const id = env.ANYTLS_SESSIONS.newUniqueId()
+        const id = env.ANYTLS_SESSIONS.idFromName(`anytls-${selectSession()}`)
         const session = env.ANYTLS_SESSIONS.get(id, { locationHint: "apac" })
         return await session.fetch(request)
       } catch {

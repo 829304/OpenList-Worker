@@ -4,7 +4,7 @@ import { wrapTls } from "./tls.js"
 
 const DEFAULT_PADDING =
   "stop=8\n0=30-30\n1=100-400\n2=400-500,c,500-1000,c,500-1000,c,500-1000,c,500-1000\n3=9-9,500-1000\n4=500-1000\n5=500-1000\n6=500-1000\n7=500-1000"
-let cachedPadding = parsePadding(DEFAULT_PADDING)
+const initialPadding = parsePadding(DEFAULT_PADDING)
 
 export function frame(command, id, payload = new Uint8Array()) {
   if (payload.length > 65535) throw new Error("frame_limit")
@@ -80,7 +80,13 @@ export function padPacket(data, packet, scheme, random = pick) {
   return parts.filter((part) => part.length)
 }
 
-export async function openAnyTls(connect, env, target, scope) {
+export async function openAnyTls(
+  connect,
+  env,
+  target,
+  scope,
+  { secure = wrapTls } = {},
+) {
   scope.stage = "node_tcp"
   const raw = connect(
     { hostname: env.ANYTLS_SERVER, port: Number(env.ANYTLS_PORT) },
@@ -101,7 +107,7 @@ export async function openAnyTls(connect, env, target, scope) {
     rawWrites.catch(() => {})
     return rawWrites
   }
-  const outer = await wrapTls(
+  const outer = await secure(
     env.ANYTLS_SNI || env.ANYTLS_SERVER,
     {
       async read() {
@@ -116,7 +122,9 @@ export async function openAnyTls(connect, env, target, scope) {
       alpn: JSON.parse(env.ANYTLS_ALPN || '["h2","http/1.1"]'),
     },
   )
-  const scheme = cachedPadding
+  // Each new TCP session starts with the baseline scheme. A server's padding
+  // update must not mutate another request/session (or a different node).
+  const scheme = initialPadding
   const padding0 = scheme.rules.get(0)?.[0]
   const paddingLength = padding0 && padding0 !== "c" ? pick(padding0) : 0
   const padLength = new Uint8Array(2)
@@ -178,7 +186,7 @@ export async function openAnyTls(connect, env, target, scope) {
         if (command === 5) throw new Error("node_rejected_session")
         if (command === 7 && id === 1 && length)
           throw new Error("target_connection_rejected")
-        if (command === 6) cachedPadding = parsePadding(decode(payload))
+        if (command === 6) parsePadding(decode(payload))
         if (command === 8) await send(frame(9, id))
         if (command === 2 && id === 1 && length) return payload
         if (command === 3 && id === 1) return undefined
