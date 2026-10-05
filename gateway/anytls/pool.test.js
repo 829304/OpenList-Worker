@@ -164,3 +164,58 @@ test("a stale reused GET reconnects once; truncated bodies discard the connectio
     await gateway.close()
   }
 })
+
+test("browsing pauses reuse connections; idle and age limits still release sockets without interrupting a response", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 0 })
+  let opens = 0, writes = 0, closes = 0, connectionScope
+  const gateway = createGateway({
+    reuseSessions: true,
+    connect() {},
+    async openTunnel(_connect, _env, _target, scope) {
+      opens++
+      connectionScope = scope
+      scope.socket = { async close() { closes++ } }
+      return {}
+    },
+    async secure() {
+      const queue = new AsyncQueue()
+      const scope = connectionScope
+      return {
+        metadata: {},
+        closed: () => false,
+        read: () => queue.read(),
+        async write() {
+          // The final request crosses the age limit while it is active.
+          if (++writes === 5) t.mock.timers.tick(2)
+          assert.equal(scope.signal.aborted, false)
+          queue.push(encode("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}"))
+        },
+      }
+    },
+  })
+  const fetch = async () => {
+    const response = await gateway.fetch(request(), env)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {})
+    return response.headers.get("x-openlist-gateway-connection")
+  }
+  try {
+    assert.equal(await fetch(), "new")
+    // Neither a normal browsing pause nor reaching the old 60s age limit
+    // should force another handshake.
+    for (const pause of [12001, 65000, 110000, 112998]) {
+      t.mock.timers.tick(pause)
+      assert.equal(await fetch(), "reused")
+    }
+    assert.equal(opens, 1)
+    assert.equal(closes, 1) // Finished response at age > 5 minutes.
+    assert.equal(await fetch(), "new")
+    t.mock.timers.tick(120001)
+    assert.equal(closes, 2) // No request is needed to release an idle socket.
+    assert.equal(await fetch(), "new")
+    assert.equal(opens, 3)
+  } finally {
+    await gateway.close()
+    t.mock.timers.reset()
+  }
+})

@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto"
 import { MAX_REQUEST_BYTES, readHttpResponse, validateRequest } from "./http.js"
 import { openAnyTls } from "./protocol.js"
 import { wrapTls } from "./tls.js"
-import { ApiConnectionPool } from "./pool.js"
+import { ApiConnectionPool, API_CONNECTION_IDLE_MS } from "./pool.js"
 
 const DEFAULT_HOSTS = "proapi.115.com,passportapi.115.com,*.115cdn.net"
 export function authorized(request, secret) {
@@ -61,10 +61,10 @@ class RequestScope {
     this.timer = undefined
     this.parentSignal.removeEventListener("abort", this.onAbort)
   }
-  idle() {
+  idle(idleMs = API_CONNECTION_IDLE_MS) {
     this.finish()
     this.stage = "idle"
-    this.idleMs = 10000
+    this.idleMs = idleMs
     this.touch()
   }
   async close() {

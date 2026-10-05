@@ -61,7 +61,7 @@ npm run build
 
 入口 Worker 仅鉴权和转发；按目标主机稳定分配到固定 4 个 SQLite Durable Object 执行 AnyTLS/TLS，复用执行器内的证书信任库和 API 连接，不写入持久化数据。这样避免免费 Worker 的 10 毫秒 CPU 上限导致间歇性空 503；Durable Object 默认每次调用的 CPU 上限为 30 秒，并可在免费套餐使用。配置中的 `ANYTLS_SESSIONS` 绑定和 SQLite migration 会在部署时自动创建，Secrets 仍属于同一网关 Worker。参见 [CPU 限制](https://developers.cloudflare.com/durable-objects/platform/limits/) 和 [免费额度](https://developers.cloudflare.com/durable-objects/platform/pricing/)。
 
-115 API 请求按目标主机复用已经验证的 AnyTLS 与内层 TLS 连接，HTTP/1.1 请求串行处理，响应读完后才交给下一个请求。每次请求使用自己的认证头和 Cookie，连接不保存账户 Cookie。空闲 10 秒或建立超过 60 秒后关闭；上游要求关闭连接、响应截断或客户端取消时也关闭。只有 GET 可以在复用的旧连接失效时重连重试一次，POST 不由连接池重放。API 响应最多缓冲 2 MiB，每个目标最多排队 16 个请求。节点返回的 padding 更新仍只作用于本连接。
+115 API 请求按目标主机复用已经验证的 AnyTLS 与内层 TLS 连接，HTTP/1.1 请求串行处理，响应读完后才交给下一个请求。每次请求使用自己的认证头和 Cookie，连接不保存账户 Cookie。空闲期限为 120 秒，最大复用寿命为 5 分钟；到期关闭空闲连接，正在处理的请求完成后再关闭，避免浏览目录时频繁重新握手。上游可以提前关闭连接；响应截断或客户端取消时也关闭。只有 GET 可以在复用的旧连接失效时重连重试一次，POST 不由连接池重放。API 响应最多缓冲 2 MiB，每个目标最多排队 16 个请求。节点返回的 padding 更新仍只作用于本连接。延长保留时间会增加 Durable Object 的活动时长，但不主动发送保活流量或定时调用 115。
 
 `X-OpenList-Gateway-Connection` 标记 `new` 或 `reused`；`Server-Timing` 返回建连、TLS 和等待 HTTP 响应的耗时，不包含凭据。非 API 主机不使用连接池；网关仍不作为视频在线播放或大文件传输通道。
 

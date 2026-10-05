@@ -1,6 +1,9 @@
 import { concat } from "./bytes.js"
 import { readHttpResponse } from "./http.js"
 
+export const API_CONNECTION_IDLE_MS = 120000
+export const API_CONNECTION_MAX_AGE_MS = 300000
+
 /** Only small 115 API responses use persistent connections, never file streams. */
 export class ApiConnectionPool {
   constructor({ connect, openTunnel, secure, Scope }) {
@@ -59,7 +62,7 @@ export class ApiConnectionPool {
       connection &&
       (connection.scope.signal.aborted ||
         connection.target.closed?.() ||
-        Date.now() - connection.created > 60000)
+        Date.now() - connection.created >= API_CONNECTION_MAX_AGE_MS)
     ) {
       await connection.scope.close()
       entry.connection = connection = undefined
@@ -129,9 +132,20 @@ export class ApiConnectionPool {
         }
       }
       scope.finish()
-      if (!connection.scope.signal.aborted && !connection.target.closed?.())
-        connection.scope.idle()
-      else entry.connection = undefined
+      const remainingLifetime =
+        API_CONNECTION_MAX_AGE_MS - (Date.now() - connection.created)
+      if (
+        !connection.scope.signal.aborted &&
+        !connection.target.closed?.() &&
+        remainingLifetime > 0
+      ) {
+        connection.scope.idle(
+          Math.min(API_CONNECTION_IDLE_MS, remainingLifetime),
+        )
+      } else {
+        await connection.scope.close()
+        entry.connection = undefined
+      }
       response.headers.set("X-OpenList-Gateway-Upstream", "1")
       response.headers.set(
         "X-OpenList-Gateway-Connection",
