@@ -169,6 +169,8 @@ async function invalidateDirectoryCache(
 
 export interface GetDriverOptions {
   deferTokenPersistence?: boolean
+  env?: any
+  lazy115Init?: boolean
 }
 
 export async function getOrCreateDriver(
@@ -200,6 +202,7 @@ function parseAddition(storageConfig?: any): any {
 async function createDriver(
   driverName: string,
   storageConfig?: any,
+  options: GetDriverOptions = {},
 ): Promise<StorageDriver> {
   const normDriver = (driverName || "").toLowerCase().replace(/[^a-z0-9]/g, "")
   if (normDriver === "local") {
@@ -316,27 +319,38 @@ async function createDriver(
     normDriver === "115pan"
   ) {
     const addition = parseAddition(storageConfig)
-    driver = new Pan115Driver(addition, async (tokens) => {
-      // Persist rotated access/refresh tokens for subsequent Worker isolates.
-      try {
-        const db = await getDb()
-        const st = (db.storages || []).find(
-          (s: any) => s.id === storageConfig?.id,
-        )
-        if (!st) return
-        const stAddition =
-          typeof st.addition === "string"
-            ? JSON.parse(st.addition || "{}")
-            : st.addition || {}
-        stAddition.access_token = tokens.access_token
-        stAddition.refresh_token = tokens.refresh_token
-        st.addition = JSON.stringify(stAddition)
-        await saveDb(db)
-      } catch (e) {
-        console.warn("[115open] failed to persist token:", e)
-      }
+    driver = new Pan115Driver(
+      addition,
+      async (tokens) => {
+        // Persist rotated access/refresh tokens for subsequent Worker isolates.
+        try {
+          const db = await getDb(options.env)
+          const st = (db.storages || []).find(
+            (s: any) => s.id === storageConfig?.id,
+          )
+          if (!st) return
+          const stAddition =
+            typeof st.addition === "string"
+              ? JSON.parse(st.addition || "{}")
+              : st.addition || {}
+          stAddition.access_token = tokens.access_token
+          stAddition.refresh_token = tokens.refresh_token
+          st.addition = JSON.stringify(stAddition)
+          storageConfig.addition = JSON.stringify({
+            ...parseAddition(storageConfig),
+            ...tokens,
+          })
+          if (deferredTokenPersistence.has(storageConfig)) return
+          await saveDb(db, options.env)
+        } catch (e) {
+          console.warn("[115open] failed to persist token:", e)
+        }
+      },
+      options.env,
+    )
+    await (driver as Pan115Driver).init({
+      validateCredentials: !options.lazy115Init,
     })
-    await driver.init?.()
   } else if (
     normDriver === "cloudreve" ||
     normDriver === "cloudrevev3" ||
@@ -1217,7 +1231,7 @@ export async function getDriver(
       .toLowerCase()
       .replace(/[^a-z0-9]/g, "")
     if (normDriver === "local") {
-      return createDriver(driverName, storageConfig)
+      return createDriver(driverName, storageConfig, options)
     }
 
     if (!storageConfig) {
@@ -1233,7 +1247,7 @@ export async function getDriver(
     return getOrCreateDriver(driverInitCache, cacheKey, async () => {
       const ready = driverCache.get(cacheKey)
       if (ready) return ready
-      const driver = await createDriver(driverName, storageConfig)
+      const driver = await createDriver(driverName, storageConfig, options)
       setDriverCache(cacheKey, driver)
       return driver
     })
@@ -1358,7 +1372,29 @@ export async function listItems(
     driverName = resolved.storage.driver
     try {
       const load = async () => {
-        const driver = await getDriver(driverName, resolved.storage)
+        const driver = await getDriver(driverName, resolved.storage, {
+          env: requestContext?.env,
+          lazy115Init: true,
+        })
+        if (driver instanceof Pan115Driver && !requestContext?.refresh) {
+          const parentVirtual =
+            resolved.cleanPath.slice(0, resolved.cleanPath.lastIndexOf("/")) ||
+            "/"
+          if (resolveCacheExpiration(resolved.storage, parentVirtual) > 0) {
+            const parentItems = await directoryCache.peek(
+              await directoryCacheScope(resolved.storage),
+              requestContext?.cacheOrigin || "https://openlist.invalid",
+              parentVirtual,
+            )
+            if (parentItems) {
+              const physical = resolved.physical!
+              driver.seedFolderIds(
+                physical.slice(0, physical.lastIndexOf("/")) || "/",
+                parentItems,
+              )
+            }
+          }
+        }
         try {
           return await driver.list(virtualPath, resolved.physical!)
         } finally {
@@ -1534,7 +1570,9 @@ export async function getItem(
   }
 
   const driverName = resolved.storage ? resolved.storage.driver : "Local"
-  const driver = await getDriver(driverName, resolved.storage)
+  const driver = await getDriver(driverName, resolved.storage, {
+    env: requestContext?.env,
+  })
   let item: FileItem
   try {
     item = await driver.get(virtualPath, resolved.physical!, {
@@ -1570,7 +1608,9 @@ export async function makeDirectory(
   if (resolved.isVirtual) {
     throw new Error("failed get storage: storage not found")
   }
-  const driver = await getDriver(resolved.storage!.driver, resolved.storage)
+  const driver = await getDriver(resolved.storage!.driver, resolved.storage, {
+    env: requestContext?.env,
+  })
   try {
     await driver.mkdir(virtualPath, resolved.physical!)
     await invalidateDirectoryCache(resolved.storage, requestContext)
@@ -1593,7 +1633,9 @@ export async function renameItem(
   if (resolved.isVirtual) {
     throw new Error("failed get storage: storage not found")
   }
-  const driver = await getDriver(resolved.storage!.driver, resolved.storage)
+  const driver = await getDriver(resolved.storage!.driver, resolved.storage, {
+    env: requestContext?.env,
+  })
   try {
     await driver.rename(virtualPath, resolved.physical!, newName)
     await invalidateDirectoryCache(resolved.storage, requestContext)
@@ -1618,7 +1660,9 @@ export async function removeItems(
     if (resolved.isVirtual) {
       throw new Error("failed get storage: storage not found")
     }
-    const driver = await getDriver(resolved.storage!.driver, resolved.storage)
+    const driver = await getDriver(resolved.storage!.driver, resolved.storage, {
+      env: requestContext?.env,
+    })
     try {
       await driver.remove(itemVirtual, resolved.physical!, [name])
       await invalidateDirectoryCache(resolved.storage, requestContext)
@@ -1651,6 +1695,7 @@ export async function moveItems(
     const driver = await getDriver(
       srcResolved.storage!.driver,
       srcResolved.storage,
+      { env: requestContext?.env },
     )
     try {
       await driver.move(
@@ -1692,6 +1737,7 @@ export async function copyItems(
     const driver = await getDriver(
       srcResolved.storage!.driver,
       srcResolved.storage,
+      { env: requestContext?.env },
     )
     try {
       await driver.copy(
@@ -1722,7 +1768,9 @@ export async function putItem(
   if (resolved.isVirtual) {
     throw new Error("failed get storage: storage not found")
   }
-  const driver = await getDriver(resolved.storage!.driver, resolved.storage)
+  const driver = await getDriver(resolved.storage!.driver, resolved.storage, {
+    env: requestContext?.env,
+  })
   try {
     await driver.put(virtualPath, resolved.physical!, content)
     await invalidateDirectoryCache(resolved.storage, requestContext)

@@ -115,7 +115,7 @@ export class Pan115Client {
   private onTokenUpdate?: (tokens: {
     access_token: string
     refresh_token: string
-  }) => void
+  }) => void | Promise<void>
   /** 简单限流：每秒最多 N 个请求（Go rate.Limiter 等价） */
   private rateLimitMs = 0
   private lastRequestAt = 0
@@ -125,7 +125,8 @@ export class Pan115Client {
     onTokenUpdate?: (tokens: {
       access_token: string
       refresh_token: string
-    }) => void,
+    }) => void | Promise<void>,
+    private readonly proxyEnv?: any,
   ) {
     this.addition = addition
     this.accessToken = addition.access_token || ""
@@ -259,6 +260,7 @@ export class Pan115Client {
             url,
             { ...init, signal: controller.signal },
             proxy,
+            this.proxyEnv,
           )
         } finally {
           clearTimeout(timer)
@@ -314,7 +316,7 @@ export class Pan115Client {
     this.refreshTokenValue = data.data.refresh_token
     this.addition.access_token = this.accessToken
     this.addition.refresh_token = this.refreshTokenValue
-    this.onTokenUpdate?.({
+    await this.onTokenUpdate?.({
       access_token: this.accessToken,
       refresh_token: this.refreshTokenValue,
     })

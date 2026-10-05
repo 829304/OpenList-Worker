@@ -2,8 +2,8 @@
 // OpenList-TSWorker · Cloudflare Workers 配置
 // 文档：https://developers.cloudflare.com/workers/wrangler/configuration/
 //
-// ⚠️ 本文件只声明 KV 一个存储绑定（见文件末 kv_namespaces），D1 / DO 等
-//    其它存储请按需在控制台添加。
+// 默认声明 KV 数据存储和内置 AnyTLS API 代理的 DO 绑定。
+// AnyTLS 仅在 115 存储开启内置 API 代理时使用；节点凭据通过 Secrets 配置。
 //
 // 为什么声明 KV 且【省略 id 字段】（不能写 "id": ""）：
 //   wrangler 会自动预配（automatic provisioning）：首次部署创建
@@ -165,6 +165,12 @@
   //   若想改用账户里已有的 KV，把该命名空间的 id 填进来即可。
   //
   "kv_namespaces": [{ "binding": "KV" }],
+  "durable_objects": {
+    "bindings": [{ "name": "ANYTLS_SESSIONS", "class_name": "AnyTlsProxy" }]
+  },
+  "migrations": [
+    { "tag": "anytls-v1", "new_sqlite_classes": ["AnyTlsProxy"] }
+  ],
   //
   // ▶ 方案 B：D1（关系型，可与 Go 后端共享库；DB_FORMAT 建议改为 "sql"）
   //   控制台：Workers & Pages → D1 → 创建数据库 → 绑定到 Worker，变量名填 DB

@@ -78,7 +78,7 @@ adminRouter.post("/storage/load_all", async (c) => {
   for (const storage of db.storages || []) {
     if (storage.disabled) continue
     try {
-      await getDriver(storage.driver, storage)
+      await getDriver(storage.driver, storage, { env: c.env })
       loaded++
       results.push({
         id: storage.id,
@@ -305,7 +305,7 @@ adminRouter.post("/storage/create", async (c) => {
   // 再尝试连接远程网盘（不重复 init，getDriver 内部已经 init 过）
   if (!newStorage.disabled) {
     try {
-      await getDriver(newStorage.driver, newStorage)
+      await getDriver(newStorage.driver, newStorage, { env: c.env })
       newStorage.status = "work"
     } catch (e: any) {
       newStorage.status = e.message || String(e)
@@ -410,6 +410,7 @@ adminRouter.post("/storage/update", async (c) => {
         // twice before the final update below.
         await getDriver(updatedStorage.driver, updatedStorage, {
           deferTokenPersistence: true,
+          env: c.env,
         })
         updatedStorage.status = "work"
       } catch (e: any) {
@@ -453,7 +454,7 @@ adminRouter.post("/storage/enable", async (c) => {
     // 重新加载时会再次尝试。
     ;(async () => {
       try {
-        await getDriver(s.driver, s)
+        await getDriver(s.driver, s, { env: c.env })
         const db2 = await getDb(c.env)
         const st = db2.storages.find((x: any) => x.id === id)
         if (st && !st.disabled) {
@@ -1337,6 +1338,13 @@ const driverConfigs: Record<string, any> = {
       SEED_POLICY_FIELD,
     ],
     additional: [
+      {
+        name: "api_proxy_internal",
+        type: "bool",
+        default: "false",
+        required: false,
+        help: "内置 API 代理：使用本部署配置的机场节点，无需填写网关地址和代理密钥。仅代理 115 API，302 播放和下载仍直连网盘。",
+      },
       {
         name: "api_proxy_url",
         type: "string",

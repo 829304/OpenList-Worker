@@ -180,3 +180,92 @@ test("marked 115 upstream 503 remains an upstream response", async () => {
   assert.equal(response.status, 503)
   assert.equal((await response.json()).message, "upstream unavailable")
 })
+
+test("internal proxy uses private DO bindings for APIs and token refresh, never public fetch", async () => {
+  globalThis.fetch = (async () =>
+    assert.fail("public network must not be used")) as typeof fetch
+  const hosts: string[] = []
+  let attempts = 0,
+    tokens: any
+  const env = {
+    ANYTLS_SESSIONS: {
+      idFromName(name: string) {
+        return name
+      },
+      get(id: string, options: any) {
+        assert.equal(options.locationHint, "apac")
+        return {
+          async fetch(request: Request) {
+            assert.equal(new URL(request.url).hostname, "anytls.internal")
+            const envelope: any = await request.json()
+            const host = new URL(envelope.url).hostname
+            assert.equal(id, `115-api-${host}`)
+            hosts.push(host)
+            if (host === "passportapi.115.com")
+              return Response.json({
+                state: true,
+                code: 0,
+                data: { access_token: "fresh", refresh_token: "new-refresh" },
+              })
+            if (!attempts++)
+              return Response.json({ state: false, code: 40140125 })
+            assert.equal(
+              new Headers(envelope.headers).get("authorization"),
+              "Bearer fresh",
+            )
+            return Response.json({ state: true, code: 0, data: { user_id: 1 } })
+          },
+        }
+      },
+    },
+  }
+  const client = new Pan115Client(
+    {
+      api_proxy_internal: true,
+      access_token: "expired",
+      refresh_token: "old-refresh",
+    },
+    (value) => {
+      tokens = value
+    },
+    env,
+  )
+  assert.equal((await client.userInfo()).user_id, 1)
+  assert.deepEqual(hosts, [
+    "proapi.115.com",
+    "passportapi.115.com",
+    "proapi.115.com",
+  ])
+  assert.equal(tokens.refresh_token, "new-refresh")
+})
+
+test("internal proxy rejects CDN targets, missing binding and transport failure without direct fallback", async () => {
+  globalThis.fetch = (async () =>
+    assert.fail("direct fallback must not be used")) as typeof fetch
+  const config = getApiProxyConfig({ api_proxy_internal: true })
+  await assert.rejects(
+    fetchViaApiProxy("https://cdn.115cdn.net/video", {}, config, {}),
+    /只允许访问 115 API/,
+  )
+  await assert.rejects(
+    fetchViaApiProxy("https://proapi.115.com/open/user/info", {}, config, {}),
+    /未配置/,
+  )
+  const env = {
+    ANYTLS_SESSIONS: {
+      idFromName: () => "id",
+      get: () => ({
+        fetch: async () => {
+          throw Error("private-node-details")
+        },
+      }),
+    },
+  }
+  await assert.rejects(
+    fetchViaApiProxy("https://proapi.115.com/open/user/info", {}, config, env),
+    (error) =>
+      error instanceof ApiProxyError &&
+      error.retryable &&
+      !error.message.includes("private-node-details"),
+  )
+})

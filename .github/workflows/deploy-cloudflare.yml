@@ -7,7 +7,6 @@ on:
     paths:
       - "src/**"
       - "api/**"
-      - "gateway/anytls/**"
       - "scripts/fetch-frontend.mjs"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -24,7 +23,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Build and deploy gateway and OpenList
+    name: Build and deploy OpenList with integrated API proxy
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -45,17 +44,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build and test AnyTLS gateway
-        working-directory: gateway/anytls
-        run: |
-          npm ci
-          npm test
-          npm run build
+      - name: Test integrated AnyTLS proxy
+        run: pnpm run test:anytls
 
       - name: Verify 115 proxy integration
         run: >-
           pnpm exec tsx --test
           src/backend/drivers/115open/proxy.test.ts
+          src/backend/drivers/115open/navigation.test.ts
+          src/backend/server/admin_115_proxy.test.ts
           src/backend/server/raw_115_proxy.test.ts
           src/backend/server/proxy_request.test.ts
           src/backend/server/proxy_endpoint_gate.test.ts
@@ -79,17 +76,8 @@ jobs:
           fi
           printf '%s' "$ADMIN_PASS" | pnpm exec wrangler secret put ADMIN_PASS
 
-      # AnyTLS credentials and GATEWAY_TOKEN are existing Cloudflare Worker
-      # Secrets. Deploying code preserves them; do not put them in this file.
-      # Deploy the gateway first so a failed gateway update stops OpenList's update.
-      - name: Deploy AnyTLS gateway
-        uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: "4.118.0"
-          command: deploy --config gateway/anytls/wrangler.jsonc
-
+      # Airport credentials are Secrets on OpenList itself. Deployment preserves
+      # them; never include subscriptions or node passwords in this workflow.
       - name: Deploy OpenList Worker
         uses: cloudflare/wrangler-action@v4
         with:

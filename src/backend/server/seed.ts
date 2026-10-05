@@ -659,7 +659,9 @@ async function uploadStreamToDriver(
   if (resolved.isVirtual || resolvedDir.isVirtual || !resolved.storage) {
     throw new Error("Target storage was not found")
   }
-  const driver = await getDriver(resolved.storage.driver, resolved.storage)
+  const driver = await getDriver(resolved.storage.driver, resolved.storage, {
+    env: c.env,
+  })
   const dynamic = driver as any
   const metadata = {
     size: file.size,
@@ -812,6 +814,7 @@ seedRouter.get("/capabilities", async (c) => {
         const driver = await getDriver(
           resolved.storage.driver,
           resolved.storage,
+          { env: c.env },
         )
         const dynamic = driver as any
         target = {
@@ -918,7 +921,9 @@ seedRouter.post("/capabilities", async (c) => {
     const resolved = await resolvePath(targetPath)
     if (resolved.isVirtual || !resolved.storage)
       throw new Error("Target storage was not found")
-    const driver = await getDriver(resolved.storage.driver, resolved.storage)
+    const driver = await getDriver(resolved.storage.driver, resolved.storage, {
+      env: c.env,
+    })
     const dynamic = driver as any
     const rapid =
       typeof dynamic.rapidUpload === "function" ||

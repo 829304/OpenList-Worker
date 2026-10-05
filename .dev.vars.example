@@ -83,3 +83,12 @@ CF_ACCOUNT=
 CF_KV_UUID=
 # 具有 KV 读写权限的 API Token
 CF_API_KEY=
+
+# 可选：115 内置 AnyTLS API 代理，仅 Cloudflare Workers 使用。
+# 在 115 存储中开启「内置 API 代理」后生效；视频/文件仍按 302 直连 CDN。
+ANYTLS_SERVER=
+ANYTLS_PORT=
+ANYTLS_PASSWORD=
+ANYTLS_SNI=
+# JSON 数组；默认 ["h2","http/1.1"]。节点与 115 证书均验证。
+ANYTLS_ALPN=

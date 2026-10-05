@@ -2,6 +2,7 @@
 export interface ApiProxyConfig {
   endpoint: string
   token: string
+  internal?: boolean
 }
 
 export class ApiProxyError extends Error {
@@ -23,6 +24,15 @@ export function getApiProxyConfig(addition: unknown): ApiProxyConfig | null {
       throw new ApiProxyError("代理配置格式无效")
     }
   }
+  if (
+    value?.api_proxy_internal === true ||
+    value?.api_proxy_internal === "true"
+  )
+    return {
+      endpoint: "https://anytls.internal/v1/request",
+      token: "",
+      internal: true,
+    }
   const raw = String(value?.api_proxy_url ?? "").trim()
   if (!raw) return null
   let url: URL
@@ -54,6 +64,7 @@ export async function fetchViaApiProxy(
   target: string,
   init: RequestInit,
   config: ApiProxyConfig | null,
+  env?: any,
 ): Promise<Response> {
   if (!config) return fetch(target, init)
   if (
@@ -65,7 +76,7 @@ export async function fetchViaApiProxy(
     throw new ApiProxyError("API 代理仅支持文本或表单请求体")
   }
   const headers = new Headers(init.headers)
-  const response = await fetch(config.endpoint, {
+  const requestInit: RequestInit = {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -80,7 +91,29 @@ export async function fetchViaApiProxy(
     }),
     signal: init.signal,
     redirect: "manual",
-  })
+  }
+  let response: Response
+  if (config.internal) {
+    if (
+      !["proapi.115.com", "passportapi.115.com"].includes(
+        new URL(target).hostname,
+      )
+    )
+      throw new ApiProxyError("内置 API 代理只允许访问 115 API")
+    if (!env?.ANYTLS_SESSIONS) throw new ApiProxyError("内置 API 代理未配置")
+    const id = env.ANYTLS_SESSIONS.idFromName(
+      `115-api-${new URL(target).hostname}`,
+    )
+    try {
+      response = await env.ANYTLS_SESSIONS.get(id, {
+        locationHint: "apac",
+      }).fetch(new Request(config.endpoint, requestInit))
+    } catch {
+      throw new ApiProxyError("内置 API 代理连接失败", true)
+    }
+  } else {
+    response = await fetch(config.endpoint, requestInit)
+  }
   const gatewayFailure =
     response.headers.get("x-openlist-gateway-error") === "1"
   // Cloudflare can terminate a gateway before its handler returns (e.g. CPU

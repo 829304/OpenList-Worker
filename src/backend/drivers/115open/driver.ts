@@ -36,9 +36,7 @@ function pan115FileToFileItem(f: Pan115File): FileItem {
   }
 }
 
-function pan115FolderInfoToFile(
-  info: Pan115FolderInfoResp,
-): Pan115File | null {
+function pan115FolderInfoToFile(info: Pan115FolderInfoResp): Pan115File | null {
   const fid = String(info.file_id || "").trim()
   const category = String(info.file_category || "").trim()
   const name = String(info.file_name || "")
@@ -96,13 +94,14 @@ export class Pan115Driver implements StorageDriver {
     onTokenUpdate?: (tokens: {
       access_token: string
       refresh_token: string
-    }) => void,
+    }) => void | Promise<void>,
+    proxyEnv?: any,
   ) {
     this.addition = normalizePan115Addition(addition)
-    this.client = new Pan115Client(this.addition, onTokenUpdate)
+    this.client = new Pan115Client(this.addition, onTokenUpdate, proxyEnv)
   }
 
-  async init(): Promise<void> {
+  async init(options: { validateCredentials?: boolean } = {}): Promise<void> {
     const a = this.addition
     // page_size 1~1150（Go Init 限制）
     let ps = a.page_size || 200
@@ -111,24 +110,26 @@ export class Pan115Driver implements StorageDriver {
     this.pageSize = ps
 
     // 验证 token（失败即挂载失败，给出明确错误）
-    try {
-      await this.client.userInfo()
-    } catch (e: any) {
-      if (e?.code === ERR_OBJECT_NOT_FOUND) throw e
-      const msg = String(e?.message || e)
-      if (
-        msg.includes("fetch") ||
-        msg.includes("ECONN") ||
-        msg.includes("abort")
-      ) {
+    if (options.validateCredentials !== false) {
+      try {
+        await this.client.userInfo()
+      } catch (e: any) {
+        if (e?.code === ERR_OBJECT_NOT_FOUND) throw e
+        const msg = String(e?.message || e)
+        if (
+          msg.includes("fetch") ||
+          msg.includes("ECONN") ||
+          msg.includes("abort")
+        ) {
+          throw new Error(
+            `115 网盘网络连接失败（${msg}）：proapi.115.com 可能无法从当前部署环境访问` +
+              `（数据中心 IP 可能被 115 拦截），请稍后重试或更换部署环境。`,
+          )
+        }
         throw new Error(
-          `115 网盘网络连接失败（${msg}）：proapi.115.com 可能无法从当前部署环境访问` +
-            `（数据中心 IP 可能被 115 拦截），请稍后重试或更换部署环境。`,
+          `115 网盘 token 验证失败：${msg}。请确认 access_token / refresh_token 有效。`,
         )
       }
-      throw new Error(
-        `115 网盘 token 验证失败：${msg}。请确认 access_token / refresh_token 有效。`,
-      )
     }
 
     // 非根目录挂载 → 计算路径前缀（Go Init parentPath）
@@ -142,6 +143,18 @@ export class Pan115Driver implements StorageDriver {
           this.parentPath = `/${p.file_name}${this.parentPath}`
         }
       }
+    }
+  }
+
+  /** Raw cached provider metadata can seed path IDs on a new Worker instance. */
+  seedFolderIds(parentPath: string, items: FileItem[]): void {
+    const parent = "/" + parentPath.split("/").filter(Boolean).join("/")
+    for (const item of items) {
+      if (item.is_dir && /^\d+$/.test(item.sign))
+        this.fidCache.set(
+          `${parent === "/" ? "" : parent}/${item.name}`,
+          item.sign,
+        )
     }
   }
 
@@ -433,20 +446,17 @@ export class Pan115Driver implements StorageDriver {
           )
         } else {
           item.raw_url_error = `${linkStage}失败：${msg}`
-          console.warn(
-            "[115open] download link resolution failed",
-            {
-              stage: linkStage,
-              endpoint: e?.endpoint || "/open/ufile/downurl",
-              httpStatus: e?.httpStatus,
-              apiCode: e?.code,
-              requestId: e?.requestId || undefined,
-              userAgentSource,
-              sentCookieNames: e?.sentCookieNames || [],
-              receivedCookieNames: e?.receivedCookieNames || [],
-              message: msg,
-            },
-          )
+          console.warn("[115open] download link resolution failed", {
+            stage: linkStage,
+            endpoint: e?.endpoint || "/open/ufile/downurl",
+            httpStatus: e?.httpStatus,
+            apiCode: e?.code,
+            requestId: e?.requestId || undefined,
+            userAgentSource,
+            sentCookieNames: e?.sentCookieNames || [],
+            receivedCookieNames: e?.receivedCookieNames || [],
+            message: msg,
+          })
         }
       }
     }

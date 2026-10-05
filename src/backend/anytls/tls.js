@@ -26,6 +26,9 @@ export async function wrapTls(
   }
   const abort = () => finish(new Error("request_cancelled"))
   scope.signal.addEventListener("abort", abort, { once: true })
+  let certificateStarted
+  const certificateMetric =
+    scope.stage === "node_tls" ? "node_cert_verify" : "target_cert_verify"
   const tls = makeTLSClient({
     host,
     verifyServerCertificate: verify,
@@ -36,7 +39,23 @@ export async function wrapTls(
       "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
       "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
     ],
-    logger: silent,
+    logger: {
+      ...silent,
+      trace: (...args) => {
+        if (args.at(-1) === "received certificate")
+          certificateStarted = Date.now()
+      },
+      debug: (...args) => {
+        if (
+          args.at(-1) === "verified certificate chain" &&
+          certificateStarted !== undefined
+        )
+          scope.timings?.push([
+            certificateMetric,
+            Date.now() - certificateStarted,
+          ])
+      },
+    },
     write: ({ header, content }) => transport.write(concat(header, content)),
     onHandshake: resolveHandshake,
     onApplicationData: (data) => queue.push(data.slice()),

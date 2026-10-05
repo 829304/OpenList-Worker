@@ -21,6 +21,8 @@ export interface Pan115Addition {
   api_proxy_url?: string
   /** 网关访问密钥，与 115 自身的访问令牌分开 */
   api_proxy_token?: string
+  /** 使用本部署内置 AnyTLS API 代理；节点凭据由 Worker Secrets 提供。 */
+  api_proxy_internal?: boolean
 }
 
 // --- API 响应类型（115 开放平台 proapi.115.com） ---

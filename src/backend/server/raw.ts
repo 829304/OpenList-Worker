@@ -493,6 +493,7 @@ rawRouter.get("/*", async (c) => {
           const driver = await getDriver(
             resolved.storage.driver,
             resolved.storage,
+            { env: c.env },
           )
           let fileItem
           try {

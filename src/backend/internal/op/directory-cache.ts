@@ -160,6 +160,32 @@ export class DirectoryCache {
       if (this.pending.get(key) === pending) this.pending.delete(key)
     }
   }
+
+  /** Inspect an existing raw listing without fetching or populating a miss. */
+  async peek(
+    scope: string,
+    origin: string,
+    path: string,
+  ): Promise<FileItem[] | undefined> {
+    const cache = await this.getBackend()
+    const epoch = await this.epoch(cache, origin, scope)
+    const key = `${origin}/.openlist-cache/directory-v1/${scope}/${epoch}/${await sha256(path)}`
+    const memory = this.entries.get(key)
+    if (memory && memory.expires > this.now())
+      return structuredClone(memory.items)
+    this.drop(key)
+    try {
+      const response = await cache?.match(key)
+      if (response) {
+        const entry: Entry = await response.json()
+        if (entry.expires > this.now() && Array.isArray(entry.items)) {
+          if (entry.bytes <= MAX_ENTRY_BYTES) this.remember(key, entry)
+          return structuredClone(entry.items)
+        }
+      }
+    } catch {}
+    return undefined
+  }
 }
 
 export const directoryCache = new DirectoryCache()

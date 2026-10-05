@@ -162,3 +162,29 @@ test("cache scope changes with storage configuration and does not expose credent
   assert.notEqual(hash, await directoryCacheScope({ ...a, id: "b" }))
   assert.notEqual(hash, await directoryCacheScope({ ...a, modified: "new" }))
 })
+
+test("peek shares parent folder IDs across instances without loading a miss and respects expiry and invalidation", async () => {
+  const edge = backend()
+  let now = 0
+  const a = new DirectoryCache(
+    async () => edge,
+    () => now,
+  )
+  const b = new DirectoryCache(
+    async () => edge,
+    () => now,
+  )
+  assert.equal(await b.peek("a", origin, "/missing"), undefined)
+  await a.list("a", origin, "/115", 1, false, async () => [
+    { ...item("media"), is_dir: true, sign: "100" },
+  ])
+  const parent = await b.peek("a", origin, "/115")
+  assert.equal(parent?.[0].sign, "100")
+  parent![0].sign = "mutated"
+  assert.equal((await b.peek("a", origin, "/115"))?.[0].sign, "100")
+  now = 60001
+  assert.equal(await b.peek("a", origin, "/115"), undefined)
+  await a.list("a", origin, "/115", 1, true, async () => [item()])
+  await a.invalidate("a", origin)
+  assert.equal(await b.peek("a", origin, "/115"), undefined)
+})

@@ -929,7 +929,7 @@ fsRouter.post("/upload/create", async (c) => {
     if (resolved.isVirtual) {
       throw new Error("failed get storage: storage not found")
     }
-    const driver = await getDriver(resolved.storage!.driver, resolved.storage)
+    const driver = await getDriver(resolved.storage!.driver, resolved.storage, { env: c.env })
     if (typeof (driver as any).createUploadSession !== "function") {
       // 当前存储不支持分片会话上传：返回 null，前端自动回退到流式上传
       return c.json({ code: 200, message: "success", data: null })
@@ -988,7 +988,7 @@ fsRouter.put("/upload/part", async (c) => {
     if (resolved.isVirtual) {
       throw new Error("failed get storage: storage not found")
     }
-    const driver = await getDriver(resolved.storage!.driver, resolved.storage)
+    const driver = await getDriver(resolved.storage!.driver, resolved.storage, { env: c.env })
     if (typeof (driver as any).uploadPart !== "function") {
       throw new Error("storage does not support chunked upload")
     }
@@ -1033,7 +1033,7 @@ fsRouter.post("/upload/complete", async (c) => {
     if (resolved.isVirtual) {
       throw new Error("failed get storage: storage not found")
     }
-    const driver = await getDriver(resolved.storage!.driver, resolved.storage)
+    const driver = await getDriver(resolved.storage!.driver, resolved.storage, { env: c.env })
     if (typeof (driver as any).completeUploadSession !== "function") {
       throw new Error("storage does not support chunked upload")
     }
@@ -1123,7 +1123,7 @@ fsRouter.post("/other", async (c) => {
     if (resolved.isVirtual || !resolved.storage) {
       throw new Error("failed get storage: storage not found")
     }
-    const driver = await getDriver(resolved.storage.driver, resolved.storage)
+    const driver = await getDriver(resolved.storage.driver, resolved.storage, { env: c.env })
     if (typeof (driver as any).other === "function") {
       const data = await (driver as any).other(method, resolved.relative, body)
       return c.json({ code: 200, message: "success", data })
@@ -1305,7 +1305,7 @@ fsRouter.post("/link", async (c) => {
         500,
       )
     }
-    const driver = await getDriver(resolved.storage.driver, resolved.storage)
+    const driver = await getDriver(resolved.storage.driver, resolved.storage, { env: c.env })
     try {
       const item = await driver.get(reqPath, resolved.physical ?? "/", {
         userAgent: c.req.header("User-Agent") || "",
@@ -1357,7 +1357,7 @@ fsRouter.post("/get_direct_upload_info", async (c) => {
     if (resolved.isVirtual || !resolved.storage) {
       return c.json({ code: 200, message: "success", data: null })
     }
-    const driver = await getDriver(resolved.storage.driver, resolved.storage)
+    const driver = await getDriver(resolved.storage.driver, resolved.storage, { env: c.env })
     const d = driver as any
     // 优先使用驱动的直传能力
     if (typeof d.getDirectUploadInfo === "function") {
@@ -1425,7 +1425,7 @@ fsRouter.post("/multipart/init", async (c) => {
     if (resolved.isVirtual) {
       throw new Error("failed get storage: storage not found")
     }
-    const driver = await getDriver(resolved.storage!.driver, resolved.storage)
+    const driver = await getDriver(resolved.storage!.driver, resolved.storage, { env: c.env })
     if (typeof (driver as any).createUploadSession !== "function") {
       // 存储不支持分片：返回 data:null，前端自动回退到流式上传
       return c.json({ code: 200, message: "success", data: null })
@@ -1525,7 +1525,7 @@ fsRouter.put("/multipart/chunk", async (c) => {
       getActualPath(user, splitUploadPath(session.path).dir),
     )
     if (resolved.isVirtual) throw new Error("failed get storage: storage not found")
-    const driver = await getDriver(resolved.storage!.driver, resolved.storage)
+    const driver = await getDriver(resolved.storage!.driver, resolved.storage, { env: c.env })
     if (typeof (driver as any).uploadPart !== "function") {
       throw new Error("storage does not support chunked upload")
     }
@@ -1576,7 +1576,7 @@ fsRouter.post("/multipart/complete", async (c) => {
       getActualPath(user, splitUploadPath(session.path).dir),
     )
     if (resolved.isVirtual) throw new Error("failed get storage: storage not found")
-    const driver = await getDriver(resolved.storage!.driver, resolved.storage)
+    const driver = await getDriver(resolved.storage!.driver, resolved.storage, { env: c.env })
     if (typeof (driver as any).completeUploadSession !== "function") {
       throw new Error("storage does not support chunked upload")
     }
@@ -1652,7 +1652,7 @@ async function fetchArchiveBytes(
   const actual = getActualPath(user, virtualPath)
   const resolved = await resolvePath(actual)
   if (resolved.isVirtual) throw new Error("failed get storage: storage not found")
-  const driver = await getDriver(resolved.storage!.driver, resolved.storage)
+  const driver = await getDriver(resolved.storage!.driver, resolved.storage, { env: c.env })
   let item: any
   try {
     item = await driver.get(virtualPath, resolved.physical!, {

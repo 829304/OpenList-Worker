@@ -16,6 +16,7 @@ export class ApiConnectionPool {
     this.entries.clear()
   }
   async fetch(request, input, env) {
+    const queuedAt = Date.now()
     const key = JSON.stringify([
       env.ANYTLS_SERVER,
       env.ANYTLS_PORT,
@@ -50,7 +51,10 @@ export class ApiConnectionPool {
     try {
       await previous
       if (request.signal.aborted) throw new Error("request_cancelled")
-      return await this.execute(entry, request, input, env)
+      const queueMs = Date.now() - queuedAt
+      const response = await this.execute(entry, request, input, env)
+      response.headers.append("Server-Timing", `queue;dur=${queueMs}`)
+      return response
     } finally {
       entry.pending--
       release()
@@ -82,7 +86,7 @@ export class ApiConnectionPool {
           input.target,
           lifetime,
         )
-        lifetime.stage = "target_tls"
+        if (!tunnel.detailedTimings) lifetime.stage = "target_tls"
         const target = await this.secure(
           input.target.hostname,
           tunnel,
@@ -150,6 +154,15 @@ export class ApiConnectionPool {
       response.headers.set(
         "X-OpenList-Gateway-Connection",
         reused ? "reused" : "new",
+      )
+      if (connection.scope.nodeReused !== undefined)
+        response.headers.set(
+          "X-OpenList-Gateway-Node-Connection",
+          reused || connection.scope.nodeReused ? "reused" : "new",
+        )
+      response.headers.set(
+        "X-OpenList-Gateway-TLS",
+        connection.target.metadata.version || "unknown",
       )
       response.headers.set(
         "Server-Timing",

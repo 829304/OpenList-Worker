@@ -107,6 +107,7 @@ test("115 directory navigation caches listings, refreshes explicitly, invalidate
     await saveDb(db, env)
     const first = await post("list", { path: "/115/media" })
     assert.equal(((await first.json()) as any).code, 200)
+    assert.equal(apiCalls.includes("/open/user/info"), false, "directory listing must avoid redundant credential preflight")
     const initialCalls = apiCalls.length
     const second = await post("list", { path: "/115/media" })
     assert.equal(second.headers.get("x-openlist-directory-cache"), "memory")

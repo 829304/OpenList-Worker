@@ -127,7 +127,8 @@ test("Connection: close prevents reuse; reused POST failures are never replayed"
 })
 
 test("a stale reused GET reconnects once; truncated bodies discard the connection", async () => {
-  let opens = 0, writes = 0
+  let opens = 0,
+    writes = 0
   const gateway = createGateway({
     reuseSessions: true,
     connect() {},
@@ -145,7 +146,11 @@ test("a stale reused GET reconnects once; truncated bodies discard the connectio
         async write() {
           writes++
           if (writes === 2) throw Error("stale connection")
-          queue.push(encode(`HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n${writes === 4 ? "{" : "{}"}`))
+          queue.push(
+            encode(
+              `HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n${writes === 4 ? "{" : "{}"}`,
+            ),
+          )
           if (writes === 4) queue.finish()
         },
       }
@@ -156,7 +161,10 @@ test("a stale reused GET reconnects once; truncated bodies discard the connectio
     assert.equal((await gateway.fetch(request(), env)).status, 200)
     assert.equal(opens, 2)
     assert.equal(writes, 3)
-    assert.equal((await gateway.fetch(request(undefined, "POST"), env)).status, 502)
+    assert.equal(
+      (await gateway.fetch(request(undefined, "POST"), env)).status,
+      502,
+    )
     assert.equal((await gateway.fetch(request(), env)).status, 200)
     assert.equal(opens, 3)
     assert.equal(writes, 5)
@@ -167,14 +175,21 @@ test("a stale reused GET reconnects once; truncated bodies discard the connectio
 
 test("browsing pauses reuse connections; idle and age limits still release sockets without interrupting a response", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 0 })
-  let opens = 0, writes = 0, closes = 0, connectionScope
+  let opens = 0,
+    writes = 0,
+    closes = 0,
+    connectionScope
   const gateway = createGateway({
     reuseSessions: true,
     connect() {},
     async openTunnel(_connect, _env, _target, scope) {
       opens++
       connectionScope = scope
-      scope.socket = { async close() { closes++ } }
+      scope.socket = {
+        async close() {
+          closes++
+        },
+      }
       return {}
     },
     async secure() {

@@ -25,7 +25,7 @@ taskRouter.all(
     for (const s of db.storages || []) {
       if (s.disabled) continue
       try {
-        const driver = await getDriver(s.driver, s)
+        const driver = await getDriver(s.driver, s, { env: c.env })
         await driver.init?.()
         // lanzou 驱动：主动校验 Cookie 是否过期（有效期约 15 天），
         // 失效时标记 status=cookie_expired，管理后台可直接看到提示

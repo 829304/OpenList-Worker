@@ -80,12 +80,11 @@ export function padPacket(data, packet, scheme, random = pick) {
   return parts.filter((part) => part.length)
 }
 
-export async function openAnyTls(
+export async function openAnyTlsNode(
   connect,
   env,
-  target,
   scope,
-  { secure = wrapTls } = {},
+  { secure = wrapTls, padding = initialPadding } = {},
 ) {
   scope.stage = "node_tcp"
   const raw = connect(
@@ -93,6 +92,10 @@ export async function openAnyTls(
     { secureTransport: "off" },
   )
   scope.socket = raw
+  if (scope.signal.aborted) {
+    await raw.close().catch(() => {})
+    throw new Error("request_cancelled")
+  }
   raw.closed.catch(() => {})
   await raw.opened
   scope.stage = "node_tls"
@@ -122,9 +125,8 @@ export async function openAnyTls(
       alpn: JSON.parse(env.ANYTLS_ALPN || '["h2","http/1.1"]'),
     },
   )
-  // Each new TCP session starts with the baseline scheme. A server's padding
-  // update must not mutate another request/session (or a different node).
-  const scheme = initialPadding
+  // A server padding update applies to later sessions for this node only.
+  const scheme = padding
   const padding0 = scheme.rules.get(0)?.[0]
   const paddingLength = padding0 && padding0 !== "c" ? pick(padding0) : 0
   const padLength = new Uint8Array(2)
@@ -152,26 +154,36 @@ export async function openAnyTls(
     writes.catch(() => {})
     return writes
   }
+  return { send, outer, raw, incoming: new ByteReader(() => outer.read()) }
+}
+
+export function streamAddress(target) {
   const hostname = encode(target.hostname)
-  const address = concat(
+  return concat(
     new Uint8Array([3, hostname.length]),
     hostname,
     new Uint8Array([1, 187]),
-  ) // port 443
-  await send(
-    concat(
-      frame(
-        4,
-        0,
-        encode(
-          `v=2\nclient=openlist-anytls-gateway/1.0.0\npadding-md5=${scheme.md5}`,
-        ),
-      ),
-      frame(1, 1),
-      frame(2, 1, address),
+  )
+}
+export function streamSettings(scheme = initialPadding) {
+  return frame(
+    4,
+    0,
+    encode(
+      `v=2\nclient=openlist-anytls-gateway/1.0.0\npadding-md5=${scheme.md5}`,
     ),
   )
-  const incoming = new ByteReader(() => outer.read())
+}
+
+export async function openAnyTls(connect, env, target, scope, options = {}) {
+  const { send, incoming } = await openAnyTlsNode(connect, env, scope, options)
+  await send(
+    concat(
+      streamSettings(options.padding),
+      frame(1, 1),
+      frame(2, 1, streamAddress(target)),
+    ),
+  )
   return {
     async read() {
       for (;;) {

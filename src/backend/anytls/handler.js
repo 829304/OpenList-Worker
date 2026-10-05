@@ -3,6 +3,7 @@ import { MAX_REQUEST_BYTES, readHttpResponse, validateRequest } from "./http.js"
 import { openAnyTls } from "./protocol.js"
 import { wrapTls } from "./tls.js"
 import { ApiConnectionPool, API_CONNECTION_IDLE_MS } from "./pool.js"
+import { AnyTlsSessionPool } from "./session.js"
 
 const DEFAULT_HOSTS = "proapi.115.com,passportapi.115.com,*.115cdn.net"
 export function authorized(request, secret) {
@@ -13,7 +14,7 @@ export function authorized(request, secret) {
     createHash("sha256").update(`Bearer ${secret}`).digest(),
   )
 }
-class RequestScope {
+export class RequestScope {
   constructor(signal) {
     this.timings = []
     this.stageStarted = Date.now()
@@ -43,6 +44,7 @@ class RequestScope {
     return this.currentStage
   }
   touch() {
+    if (this.suspendDeadline) return
     if (this.stage !== "response_body" && this.timer) return
     clearTimeout(this.timer)
     if (!this.signal.aborted)
@@ -128,17 +130,25 @@ export function createGateway({
   openTunnel = openAnyTls,
   secure = wrapTls,
   reuseSessions = false,
+  trusted = false,
 }) {
+  const tunnels =
+    reuseSessions && openTunnel === openAnyTls
+      ? new AnyTlsSessionPool({ connect, Scope: RequestScope })
+      : undefined
   const pool = new ApiConnectionPool({
     connect,
-    openTunnel,
+    openTunnel: tunnels ? (...args) => tunnels.open(...args) : openTunnel,
     secure,
     Scope: RequestScope,
   })
   return {
-    close: () => pool.close(),
+    close: async () => {
+      await pool.close()
+      await tunnels?.close()
+    },
     async fetch(request, env) {
-      if (!authorized(request, env.GATEWAY_TOKEN))
+      if (!trusted && !authorized(request, env.GATEWAY_TOKEN))
         return failure(401, "网关密钥无效")
       const path = new URL(request.url).pathname
       if (path === "/health" && request.method === "GET")
