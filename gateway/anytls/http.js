@@ -26,7 +26,11 @@ const REQUEST_HEADERS = new Set([
 ])
 export const MAX_REQUEST_BYTES = 512 * 1024
 
-export function validateRequest(input, allowedHosts) {
+export function validateRequest(
+  input,
+  allowedHosts,
+  { keepAlive = false } = {},
+) {
   if (
     !input ||
     typeof input.url !== "string" ||
@@ -83,7 +87,7 @@ export function validateRequest(input, allowedHosts) {
   }
   headers.set("host", target.hostname)
   headers.set("accept-encoding", "identity")
-  headers.set("connection", "close")
+  headers.set("connection", keepAlive ? "keep-alive" : "close")
   if (method === "POST") headers.set("content-length", String(body.length))
   const lines = [`${method} ${target.pathname}${target.search} HTTP/1.1`]
   for (const [key, value] of headers) lines.push(`${key}: ${value}`)
@@ -96,13 +100,14 @@ export function validateRequest(input, allowedHosts) {
 
 export async function readHttpResponse(transport, method, scope) {
   const reader = new ByteReader(() => transport.read())
-  let status, headers, rawHeaders
+  let status, headers, rawHeaders, http11
   let totalHeaders = 0
   for (let interim = 0; ; interim++) {
     const line = await reader.line()
     totalHeaders += line.length
     const match = /^HTTP\/1\.[01] ([1-5][0-9]{2})(?: .*|)$/.exec(line)
     if (!match) throw new Error("invalid_http_status")
+    http11 = line.startsWith("HTTP/1.1 ")
     status = Number(match[1])
     headers = new Headers()
     rawHeaders = new Map()
@@ -135,6 +140,19 @@ export async function readHttpResponse(transport, method, scope) {
   const transfer = headers.get("transfer-encoding")?.toLowerCase()
   if (transfer && (transfer !== "chunked" || lengths.length))
     throw new Error("invalid_transfer_encoding")
+  const persistent =
+    http11 &&
+    !/(^|,)\s*close\s*(,|$)/i.test(headers.get("connection") || "") &&
+    (length !== undefined ||
+      transfer === "chunked" ||
+      method === "HEAD" ||
+      status === 204 ||
+      status === 304)
+  const complete = async () => {
+    if (persistent && !reader.buffer.length && scope.complete)
+      await scope.complete()
+    else await scope.close()
+  }
   const remove = [
     ...HOP_HEADERS,
     ...(headers.get("connection") || "")
@@ -151,7 +169,7 @@ export async function readHttpResponse(transport, method, scope) {
     headers.delete("content-length")
   }
   if (method === "HEAD" || status === 204 || status === 304 || length === 0) {
-    await scope.close()
+    await complete()
     return { status, headers, body: null }
   }
   scope.streaming()
@@ -159,10 +177,11 @@ export async function readHttpResponse(transport, method, scope) {
     chunkRemaining = 0,
     trailersSize = 0
   let stopped = false
-  const stop = async () => {
+  const stop = async (success = false) => {
     if (!stopped) {
       stopped = true
-      await scope.close()
+      if (success) await complete()
+      else await scope.close()
     }
   }
   const body = new ReadableStream({
@@ -186,7 +205,7 @@ export async function readHttpResponse(transport, method, scope) {
               }
               if (!stopped) {
                 controller.close()
-                await stop()
+                await stop(true)
               }
               return
             }
@@ -208,14 +227,14 @@ export async function readHttpResponse(transport, method, scope) {
           if (!data) {
             if (remaining) throw new Error("truncated_body")
             controller.close()
-            await stop()
+            await stop(true)
             return
           }
           if (remaining !== undefined) remaining -= data.length
           controller.enqueue(data)
           if (remaining === 0) {
             controller.close()
-            await stop()
+            await stop(true)
           }
         }
       } catch (error) {
@@ -223,7 +242,7 @@ export async function readHttpResponse(transport, method, scope) {
         await stop()
       }
     },
-    cancel: stop,
+    cancel: () => stop(),
   })
   return { status, headers, body }
 }

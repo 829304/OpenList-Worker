@@ -61,6 +61,8 @@ jobs:
           src/backend/server/proxy_endpoint_gate.test.ts
           src/backend/server/raw_url_prefix.test.ts
           src/backend/internal/driver/proxy.test.ts
+          src/backend/internal/op/directory-cache.test.ts
+          src/backend/server/fs_115_cache.test.ts
 
       - name: Fetch official frontend assets
         run: node scripts/fetch-frontend.mjs

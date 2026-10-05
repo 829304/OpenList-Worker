@@ -71,18 +71,22 @@ export const fsRouter = new Hono()
 fsRouter.route("/seed", seedRouter)
 
 const getStorageRequestContext = (c: any) => {
+  const context = {
+    env: c.env,
+    userAgent: c.req.header("User-Agent") || "",
+    cacheOrigin: new URL(c.req.url).origin,
+  }
   try {
     const executionCtx = c.executionCtx
     if (!executionCtx || typeof executionCtx.waitUntil !== "function") {
-      return undefined
+      return context
     }
     return {
       waitUntil: (promise: Promise<unknown>) => executionCtx.waitUntil(promise),
-      env: c.env, // 传递 env 用于请求级 KV 缓存复用
-      userAgent: c.req.header("User-Agent") || "",
+      ...context,
     }
   } catch {
-    return undefined
+    return context
   }
 }
 
@@ -204,7 +208,13 @@ fsRouter.post("/list", async (c) => {
   if (!isShare && (!user || user.disabled)) {
     return c.json({ code: 401, message: "Unauthorized", data: null }, 401)
   }
-  const requestContext = getStorageRequestContext(c)
+  const requestContext = {
+    ...getStorageRequestContext(c),
+    env: c.env,
+    cacheOrigin: new URL(c.req.url).origin,
+    refresh: body.refresh === true,
+    directoryCacheStatus: "bypass",
+  }
   const reqPath = getActualPath(user, body.path || "/")
   const page = parseInt(body.page, 10) || 1
   const perPage = parseInt(body.per_page, 10) || 0
@@ -343,6 +353,7 @@ fsRouter.post("/list", async (c) => {
       reqPath,
       requestContext,
     )
+    c.header("X-OpenList-Directory-Cache", requestContext.directoryCacheStatus)
     // write：用户写权限 + meta.write_users 白名单（对齐 Go common.CanWrite）
     const writable = canWrite(user) && canWriteMeta(user, meta, reqPath)
     const writeContentBypass = canWriteContentBypassUserPerms(meta, reqPath)

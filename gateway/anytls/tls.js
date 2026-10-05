@@ -75,5 +75,6 @@ export async function wrapTls(
     read: () => queue.read(),
     write: (data) => tls.write(data),
     metadata: tls.getMetadata(),
+    closed: () => queue.done || scope.signal.aborted,
   }
 }

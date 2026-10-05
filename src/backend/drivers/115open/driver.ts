@@ -190,7 +190,10 @@ export class Pan115Driver implements StorageDriver {
       })
       for (const f of files) {
         items.push(pan115FileToFileItem(f))
-        this.fidCache.set(f.fid, f.fid)
+        if (f.fc === "0") {
+          const parent = "/" + physicalPath.split("/").filter(Boolean).join("/")
+          this.fidCache.set(`${parent === "/" ? "" : parent}/${f.fn}`, f.fid)
+        }
       }
       if (items.length >= count || files.length === 0) break
       offset += files.length
@@ -452,6 +455,7 @@ export class Pan115Driver implements StorageDriver {
 
   async mkdir(_virtualPath: string, physicalPath: string): Promise<void> {
     this.budget.used = 0
+    this.fidCache.clear()
     const segs = String(physicalPath || "")
       .split("/")
       .filter(Boolean)
@@ -468,6 +472,7 @@ export class Pan115Driver implements StorageDriver {
     newName: string,
   ): Promise<void> {
     this.budget.used = 0
+    this.fidCache.clear()
     const file = await this.resolveFile(physicalPath)
     if (!this.reserve()) throw new Error("subrequest budget exceeded")
     await this.client.updateFile(file.fid, newName)
@@ -479,6 +484,7 @@ export class Pan115Driver implements StorageDriver {
     _names: string[],
   ): Promise<void> {
     this.budget.used = 0
+    this.fidCache.clear()
     const file = await this.resolveFile(physicalPath)
     if (!this.reserve()) throw new Error("subrequest budget exceeded")
     await this.client.delFile(file.fid, file.pid || this.getRootId())
@@ -492,6 +498,7 @@ export class Pan115Driver implements StorageDriver {
     _dstPhys: string,
   ): Promise<void> {
     this.budget.used = 0
+    this.fidCache.clear()
     const file = await this.resolveFile(srcPhys)
     const dstId = await this.resolveFolderId(dstDir)
     if (!this.reserve()) throw new Error("subrequest budget exceeded")
@@ -506,6 +513,7 @@ export class Pan115Driver implements StorageDriver {
     _dstPhys: string,
   ): Promise<void> {
     this.budget.used = 0
+    this.fidCache.clear()
     const file = await this.resolveFile(srcPhys)
     const dstId = await this.resolveFolderId(dstDir)
     if (!this.reserve()) throw new Error("subrequest budget exceeded")
@@ -523,6 +531,7 @@ export class Pan115Driver implements StorageDriver {
       throw new Error("115 网盘不允许上传空文件")
     }
     this.budget.used = 0
+    this.fidCache.clear()
     const segs = String(physicalPath || "")
       .split("/")
       .filter(Boolean)

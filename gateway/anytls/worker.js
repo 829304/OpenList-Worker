@@ -32,7 +32,7 @@ import { createIngress } from "./ingress.js"
 export class AnyTlsSession extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env)
-    this.gateway = createGateway({ connect })
+    this.gateway = createGateway({ connect, reuseSessions: true })
   }
   fetch(request) {
     return this.gateway.fetch(request, this.env)

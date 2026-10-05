@@ -4,7 +4,13 @@ import { authorized, failure } from "./handler.js"
 // processing execute inside a small pool of Durable Objects. Reusing executors
 // retains parsed trust roots, while every request still owns its own sockets.
 export function createIngress({
-  selectSession = () => Math.floor(Math.random() * 4),
+  selectSession = (request) => {
+    let hash = 0
+    for (const char of request.headers.get("X-OpenList-Gateway-Affinity") ||
+      "proapi.115.com")
+      hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+    return hash % 4
+  },
 } = {}) {
   return {
     async fetch(request, env) {
@@ -24,7 +30,9 @@ export function createIngress({
       if (request.method !== "POST") return failure(405, "请使用 POST 请求网关")
       if (!env.ANYTLS_SESSIONS) return failure(503, "网关会话服务尚未配置")
       try {
-        const id = env.ANYTLS_SESSIONS.idFromName(`anytls-${selectSession()}`)
+        const id = env.ANYTLS_SESSIONS.idFromName(
+          `anytls-${selectSession(request)}`,
+        )
         const session = env.ANYTLS_SESSIONS.get(id, { locationHint: "apac" })
         return await session.fetch(request)
       } catch {

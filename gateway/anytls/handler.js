@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto"
 import { MAX_REQUEST_BYTES, readHttpResponse, validateRequest } from "./http.js"
 import { openAnyTls } from "./protocol.js"
 import { wrapTls } from "./tls.js"
+import { ApiConnectionPool } from "./pool.js"
 
 const DEFAULT_HOSTS = "proapi.115.com,passportapi.115.com,*.115cdn.net"
 export function authorized(request, secret) {
@@ -14,6 +15,8 @@ export function authorized(request, secret) {
 }
 class RequestScope {
   constructor(signal) {
+    this.timings = []
+    this.stageStarted = Date.now()
     this.controller = new AbortController()
     this.signal = this.controller.signal
     this.stage = "request"
@@ -25,6 +28,19 @@ class RequestScope {
     signal.addEventListener("abort", this.onAbort, { once: true })
     if (signal.aborted) this.close()
     else this.touch()
+  }
+  set stage(value) {
+    const now = Date.now()
+    if (this.currentStage)
+      this.timings.push([
+        this.currentStage,
+        Math.max(0, now - this.stageStarted),
+      ])
+    this.currentStage = value
+    this.stageStarted = now
+  }
+  get stage() {
+    return this.currentStage
   }
   touch() {
     if (this.stage !== "response_body" && this.timer) return
@@ -38,6 +54,17 @@ class RequestScope {
   streaming() {
     this.stage = "response_body"
     this.idleMs = 60000
+    this.touch()
+  }
+  finish() {
+    clearTimeout(this.timer)
+    this.timer = undefined
+    this.parentSignal.removeEventListener("abort", this.onAbort)
+  }
+  idle() {
+    this.finish()
+    this.stage = "idle"
+    this.idleMs = 10000
     this.touch()
   }
   async close() {
@@ -100,8 +127,16 @@ export function createGateway({
   connect,
   openTunnel = openAnyTls,
   secure = wrapTls,
+  reuseSessions = false,
 }) {
+  const pool = new ApiConnectionPool({
+    connect,
+    openTunnel,
+    secure,
+    Scope: RequestScope,
+  })
   return {
+    close: () => pool.close(),
     async fetch(request, env) {
       if (!authorized(request, env.GATEWAY_TOKEN))
         return failure(401, "网关密钥无效")
@@ -114,11 +149,10 @@ export function createGateway({
       if (path !== "/v1/request") return failure(404, "接口不存在")
       if (request.method !== "POST") return failure(405, "请使用 POST 请求网关")
       let input
+      let envelope
       try {
-        input = validateRequest(
-          await readEnvelope(request),
-          env.ALLOWED_HOSTS || DEFAULT_HOSTS,
-        )
+        envelope = await readEnvelope(request)
+        input = validateRequest(envelope, env.ALLOWED_HOSTS || DEFAULT_HOSTS)
       } catch {
         return failure(400, "目标地址、请求头或请求体不符合网关规则")
       }
@@ -131,6 +165,29 @@ export function createGateway({
         port > 65535
       )
         return failure(503, "网关节点尚未配置")
+      if (
+        reuseSessions &&
+        ["proapi.115.com", "passportapi.115.com"].includes(
+          input.target.hostname,
+        )
+      ) {
+        try {
+          input = validateRequest(
+            envelope,
+            env.ALLOWED_HOSTS || DEFAULT_HOSTS,
+            { keepAlive: true },
+          )
+          return await pool.fetch(request, input, env)
+        } catch (error) {
+          console.warn(
+            JSON.stringify({
+              event: "anytls_pool_failure",
+              reason: failureReason(error),
+            }),
+          )
+          return failure(502, "代理网关 API 连接失败")
+        }
+      }
       const scope = new RequestScope(request.signal)
       try {
         const tunnel = await openTunnel(connect, env, input.target, scope)
@@ -146,6 +203,10 @@ export function createGateway({
         scope.stage = "response_headers"
         const response = await readHttpResponse(target, input.method, scope)
         response.headers.set("X-OpenList-Gateway-Upstream", "1")
+        response.headers.set(
+          "Server-Timing",
+          scope.timings.map(([name, ms]) => `${name};dur=${ms}`).join(", "),
+        )
         return new Response(response.body, {
           status: response.status,
           headers: response.headers,

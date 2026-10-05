@@ -70,6 +70,7 @@ export async function fetchViaApiProxy(
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.token}`,
+      "X-OpenList-Gateway-Affinity": new URL(target).hostname,
     },
     body: JSON.stringify({
       url: target,

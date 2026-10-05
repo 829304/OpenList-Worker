@@ -2,6 +2,8 @@ import { resolvePath, getDb, getSettings, saveDb } from "../model/db"
 import { encodeDownloadPath } from "../../pkg/path"
 import { canUseProxyEndpoint, normalizeExtList } from "../driver/proxy"
 import { FileItem, StorageDriver, calcFileType } from "../driver/base"
+import { resolveCacheExpiration } from "../driver/storageopts"
+import { directoryCache, directoryCacheScope } from "./directory-cache"
 import { Onedrive } from "../../drivers/onedrive/driver"
 import { OnedriveAPP } from "../../drivers/onedrive_app/driver"
 import { AliyundriveOpen } from "../../drivers/aliyundrive_open/driver"
@@ -141,6 +143,28 @@ export interface StorageRequestContext {
   waitUntil?: (promise: Promise<unknown>) => void
   env?: any // ESA/Cloudflare env，用于请求级缓存复用
   userAgent?: string
+  refresh?: boolean
+  cacheOrigin?: string
+  directoryCacheStatus?: string
+}
+
+function cachesDirectory(storage: any): boolean {
+  return /^(115|115cloud|115open|115netdisk|115pan)$/.test(
+    String(storage?.driver || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, ""),
+  )
+}
+
+async function invalidateDirectoryCache(
+  storage: any,
+  context?: StorageRequestContext,
+) {
+  if (!cachesDirectory(storage)) return
+  await directoryCache.invalidate(
+    await directoryCacheScope(storage),
+    context?.cacheOrigin || "https://openlist.invalid",
+  )
 }
 
 export interface GetDriverOptions {
@@ -1333,18 +1357,32 @@ export async function listItems(
   if (resolved.storage) {
     driverName = resolved.storage.driver
     try {
-      const driver = await getDriver(driverName, resolved.storage)
-      // Get raw items from driver
-      try {
-        items = await driver.list(virtualPath, resolved.physical!)
-      } finally {
-        await flushPendingDriverState(
-          driverName,
-          resolved.storage,
-          driver,
-          requestContext,
-        )
+      const load = async () => {
+        const driver = await getDriver(driverName, resolved.storage)
+        try {
+          return await driver.list(virtualPath, resolved.physical!)
+        } finally {
+          await flushPendingDriverState(
+            driverName,
+            resolved.storage,
+            driver,
+            requestContext,
+          )
+        }
       }
+      items = cachesDirectory(resolved.storage)
+        ? await directoryCache.list(
+            await directoryCacheScope(resolved.storage),
+            requestContext?.cacheOrigin || "https://openlist.invalid",
+            resolved.cleanPath,
+            resolveCacheExpiration(resolved.storage, resolved.cleanPath),
+            requestContext?.refresh === true,
+            load,
+            (source) => {
+              if (requestContext) requestContext.directoryCacheStatus = source
+            },
+          )
+        : await load()
       if (resolved.storage.status !== "work") {
         resolved.storage.status = "work"
         const db = await getDb(requestContext?.env)
@@ -1535,6 +1573,7 @@ export async function makeDirectory(
   const driver = await getDriver(resolved.storage!.driver, resolved.storage)
   try {
     await driver.mkdir(virtualPath, resolved.physical!)
+    await invalidateDirectoryCache(resolved.storage, requestContext)
   } finally {
     await flushPendingDriverState(
       resolved.storage!.driver,
@@ -1557,6 +1596,7 @@ export async function renameItem(
   const driver = await getDriver(resolved.storage!.driver, resolved.storage)
   try {
     await driver.rename(virtualPath, resolved.physical!, newName)
+    await invalidateDirectoryCache(resolved.storage, requestContext)
   } finally {
     await flushPendingDriverState(
       resolved.storage!.driver,
@@ -1581,6 +1621,7 @@ export async function removeItems(
     const driver = await getDriver(resolved.storage!.driver, resolved.storage)
     try {
       await driver.remove(itemVirtual, resolved.physical!, [name])
+      await invalidateDirectoryCache(resolved.storage, requestContext)
     } finally {
       await flushPendingDriverState(
         resolved.storage!.driver,
@@ -1619,6 +1660,9 @@ export async function moveItems(
         srcResolved.physical!,
         dstResolved.physical!,
       )
+      await invalidateDirectoryCache(srcResolved.storage, requestContext)
+      if (dstResolved.storage?.id !== srcResolved.storage?.id)
+        await invalidateDirectoryCache(dstResolved.storage, requestContext)
     } finally {
       await flushPendingDriverState(
         srcResolved.storage!.driver,
@@ -1657,6 +1701,7 @@ export async function copyItems(
         srcResolved.physical!,
         dstResolved.physical!,
       )
+      await invalidateDirectoryCache(dstResolved.storage, requestContext)
     } finally {
       await flushPendingDriverState(
         srcResolved.storage!.driver,
@@ -1680,6 +1725,7 @@ export async function putItem(
   const driver = await getDriver(resolved.storage!.driver, resolved.storage)
   try {
     await driver.put(virtualPath, resolved.physical!, content)
+    await invalidateDirectoryCache(resolved.storage, requestContext)
   } finally {
     await flushPendingDriverState(
       resolved.storage!.driver,
