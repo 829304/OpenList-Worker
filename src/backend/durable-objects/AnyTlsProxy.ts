@@ -10,11 +10,26 @@ export class AnyTlsProxy extends DurableObject {
     trusted: true,
   })
 
-  fetch(request: Request): Promise<Response> {
-    return this.gateway.fetch(request, {
+  async fetch(request: Request): Promise<Response> {
+    const started = Date.now()
+    const response = await this.gateway.fetch(request, {
       ...this.env,
       ALLOWED_HOSTS: "proapi.115.com,passportapi.115.com",
       ANYTLS_INSECURE: "false",
     })
+    console.info(
+      JSON.stringify({
+        event: "115_proxy_timing",
+        status: response.status,
+        elapsedMs: Date.now() - started,
+        connection: response.headers.get("X-OpenList-Gateway-Connection"),
+        nodeConnection: response.headers.get(
+          "X-OpenList-Gateway-Node-Connection",
+        ),
+        tls: response.headers.get("X-OpenList-Gateway-TLS"),
+        timing: response.headers.get("Server-Timing"),
+      }),
+    )
+    return response
   }
 }
